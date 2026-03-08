@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+
+# Environment variables — NEVER commit real API keys
+.env
+.env.local
+.env.*.local
+
+# Bot config contains API keys/tokens — use config.example.json as template
+bot/config.json
+
+# Electron build artifacts
+release/
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript build info
+tsconfig.tsbuildinfo
+
+# Windows null device artifact
+nul
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Claude Code local settings
+.claude/
