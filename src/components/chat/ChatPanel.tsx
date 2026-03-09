@@ -32,13 +32,24 @@ export default function ChatPanel() {
       >
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
-            {debateMode && (
+            {debateMode ? (
               <div
                 className="text-xs"
                 style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace' }}
               >
                 ⚔️ AI Debate
               </div>
+            ) : (
+              <span
+                className="text-xs font-medium px-2 py-1 rounded"
+                style={{
+                  color: '#38bdf8',
+                  background: '#38bdf818',
+                  border: '1px solid #38bdf840',
+                }}
+              >
+                STRATA BOT
+              </span>
             )}
           </div>
 
