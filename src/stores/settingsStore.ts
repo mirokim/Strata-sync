@@ -213,7 +213,7 @@ export const useSettingsStore = create<SettingsState>()(
       personaPromptOverrides: {},
       disabledPersonaIds: ['art_director', 'plan_director', 'level_director', 'prog_director'],
       editorDefaultLocked: false,
-      paragraphRenderQuality: 'fast' as ParagraphRenderQuality,
+      paragraphRenderQuality: 'high' as ParagraphRenderQuality,
       showNodeLabels: false,
       tagPresets: [],
       tagColors: {},
