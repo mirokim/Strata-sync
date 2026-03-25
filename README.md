@@ -554,7 +554,7 @@ src/
 │   ├── tfidfCache.ts       # IndexedDB TF-IDF cache (save/restore/fingerprint validation)
 │   ├── speakerConfig.ts    # Persona ID + label + color centralized config
 │   ├── modelConfig.ts      # Model → provider mapping + model list
-│   ├── personaVaultConfig.ts # Vault-scoped .rembrant/personas.md parsing
+│   ├── personaVaultConfig.ts # Vault-scoped .strata-sync/personas.md parsing
 │   └── nodeColors.ts       # Hash-based deterministic node colors + degree-proportional sizing
 │
 ├── services/

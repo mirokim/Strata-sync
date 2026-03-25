@@ -10,6 +10,7 @@
  */
 
 import type { SerializedTfIdf } from './graphAnalysis'
+import { TFIDF_SCHEMA_VERSION } from './graphAnalysis'
 import type { LoadedDocument } from '@/types'
 import { logger } from './logger'
 
@@ -76,12 +77,32 @@ export async function loadTfIdfCache(
     db.close()
     if (!raw || typeof raw !== 'object') return null
     const cached = raw as SerializedTfIdf
-    if (cached.schemaVersion !== 3) return null
+    if (cached.schemaVersion !== TFIDF_SCHEMA_VERSION) return null
     if (cached.fingerprint !== fingerprint) return null
     return cached
   } catch (err) {
     logger.warn('[tfidfCache] Cache read failed:', err)
     return null
+  }
+}
+
+/**
+ * Deletes the TF-IDF cache for a specific vault from IndexedDB.
+ * Called after the Edit Agent modifies files -> triggers index rebuild on next search.
+ */
+export async function invalidateTfIdfCache(vaultPath: string): Promise<void> {
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite')
+      const req = tx.objectStore(STORE).delete(vaultPath)
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    db.close()
+    logger.debug('[tfidfCache] Cache invalidated')
+  } catch (err) {
+    logger.warn('[tfidfCache] Cache invalidation failed:', err)
   }
 }
 

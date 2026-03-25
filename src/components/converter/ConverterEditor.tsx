@@ -18,7 +18,12 @@ import { convertToObsidianMD } from '@/services/llmClient'
 import { readFileAsText, type ConversionMeta, type ConversionType } from '@/lib/mdConverter'
 import { cn } from '@/lib/utils'
 
-const DOC_TYPES: ConversionType[] = ['회의록', '보고서', '기획서', '기타']
+const DOC_TYPES: { value: ConversionType; label: string }[] = [
+  { value: 'minutes',  label: 'Meeting Minutes' },
+  { value: 'report',   label: 'Report' },
+  { value: 'proposal', label: 'Proposal' },
+  { value: 'other',    label: 'Other' },
+]
 
 const SUPPORTED_EXTS = ['.txt', '.md', '.html', '.htm', '.docx', '.pdf']
 function isSupportedFile(name: string): boolean {
@@ -188,7 +193,7 @@ export default function ConverterEditor({ onBack }: ConverterEditorProps = {}) {
     title: '',
     speaker: 'chief_director',
     date: today(),
-    type: '회의록',
+    type: 'minutes',
   })
 
   // Keep meta.speaker in sync if currently selected speaker is removed
@@ -748,7 +753,7 @@ export default function ConverterEditor({ onBack }: ConverterEditorProps = {}) {
                     outline: 'none',
                   }}
                 >
-                  {DOC_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {DOC_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
             </div>

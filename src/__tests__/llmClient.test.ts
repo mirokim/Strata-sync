@@ -74,7 +74,6 @@ function mockFetch(stream: ReadableStream<Uint8Array>, ok = true) {
 function resetSettings() {
   useSettingsStore.setState({
     personaModels: { ...DEFAULT_PERSONA_MODELS },
-    settingsPanelOpen: false,
   })
 }
 
@@ -144,7 +143,7 @@ describe('llmClient — streamMessage', () => {
     const [, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
     const body = JSON.parse((options as RequestInit).body as string)
 
-    expect(body.system).toContain('Chief Director')
+    expect(body.system).toContain('STRATA BOT')
     expect(body.messages).toContainEqual({ role: 'user', content: 'question here' })
     expect(body.stream).toBe(true)
   })
@@ -216,8 +215,7 @@ describe('llmClient — streamMessage', () => {
     // Override chief_director to use OpenAI gpt-4o
     useSettingsStore.setState({
       personaModels: { ...DEFAULT_PERSONA_MODELS, chief_director: 'gpt-4o' },
-      settingsPanelOpen: false,
-    })
+      })
     mockFetch(makeOpenAIStream(['gpt response']))
 
     const { streamMessage } = await import('@/services/llmClient')

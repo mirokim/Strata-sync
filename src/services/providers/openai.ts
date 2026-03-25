@@ -37,7 +37,9 @@ export async function streamCompletion(
   systemPrompt: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
   onChunk: (chunk: string) => void,
-  imageAttachments: Attachment[] = []
+  imageAttachments: Attachment[] = [],
+  onUsage?: (inputTokens: number, outputTokens: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const fullMessages: OpenAIMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -60,7 +62,9 @@ export async function streamCompletion(
       model,
       messages: fullMessages,
       stream: true,
+      ...(onUsage ? { stream_options: { include_usage: true } } : {}),
     }),
+    signal,
   })
 
   if (!response.ok) {
@@ -71,15 +75,29 @@ export async function streamCompletion(
   /**
    * OpenAI streaming delta format:
    * { choices: [{ delta: { content: '...' } }] }
+   * Final usage chunk (when stream_options.include_usage=true):
+   * { choices: [], usage: { prompt_tokens, completion_tokens } }
    */
+  let inputTokens = 0
+  let outputTokens = 0
+
   function extractChunk(data: string): string | null {
     const parsed = JSON.parse(data) as {
       choices?: Array<{ delta?: { content?: string } }>
+      usage?: { prompt_tokens?: number; completion_tokens?: number }
+    }
+    if (parsed.usage) {
+      inputTokens = parsed.usage.prompt_tokens ?? 0
+      outputTokens = parsed.usage.completion_tokens ?? 0
     }
     return parsed.choices?.[0]?.delta?.content ?? null
   }
 
   for await (const chunk of parseSSEStream(response, extractChunk)) {
     onChunk(chunk)
+  }
+
+  if (onUsage && (inputTokens > 0 || outputTokens > 0)) {
+    onUsage(inputTokens, outputTokens)
   }
 }

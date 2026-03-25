@@ -11,6 +11,7 @@
  */
 
 import { useState, useRef } from 'react'
+import { DEFAULT_FAST_MODEL_ID } from '@/lib/modelConfig'
 import { useSettingsStore, getApiKey } from '@/stores/settingsStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { pageToVaultMarkdown, toStem, type ConfluencePage, type VaultPage } from '@/lib/confluenceToMarkdown'
@@ -72,7 +73,7 @@ function parseConfluenceUrl(raw: string): {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const HARD_MIN_DATE = '2025-01-01'
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
+const HAIKU_MODEL = DEFAULT_FAST_MODEL_ID
 const PYTHON_SCRIPTS = ['audit_and_fix.py', 'enhance_wikilinks.py', 'gen_index.py']
 
 function getDateStamp(): string {
@@ -87,7 +88,7 @@ function getDateStamp(): string {
 
 async function loadManualContext(): Promise<string> {
   try {
-    const api = (window as any).confluenceAPI
+    const api = window.confluenceAPI
     if (!api?.readAppFile) return ''
     const text = await api.readAppFile('manual/Graph_RAG_Data_Refinement_Manual_v3.0.md')
     return text ? text.slice(0, 3000) : ''  // Truncated to 3K to avoid rate limit
@@ -509,21 +510,19 @@ export default function ConfluenceTab() {
     setFixProgress({ done: 0, total: problemReviews.length })
     setFixedFiles([])
 
-    const vaultAPI = (window as any).vaultAPI as {
-      readFile: (path: string) => Promise<string | null>
-      saveFile: (path: string, content: string) => Promise<void>
-    }
+    const vAPI = window.vaultAPI
+    if (!vAPI) return
 
     const results: { filename: string; ok: boolean }[] = []
     for (let i = 0; i < problemReviews.length; i++) {
       const r = problemReviews[i]
       const filePath = activeDirRef.current + '/' + r.filename
       try {
-        const content = await vaultAPI.readFile(filePath)
+        const content = await vAPI.readFile(filePath)
         if (!content) { results.push({ filename: r.filename, ok: false }); continue }
         const fixed = await fixFileWithClaude(content, r.issues, apiKey)
         if (fixed) {
-          await vaultAPI.saveFile(filePath, fixed)
+          await vAPI.saveFile(filePath, fixed)
           results.push({ filename: r.filename, ok: true })
         } else {
           results.push({ filename: r.filename, ok: false })
@@ -541,7 +540,7 @@ export default function ConfluenceTab() {
   const handleSaveKeywords = async () => {
     if (!vaultPath || extractedKeywords.length === 0) return
     setKeywordSaveStatus('saving')
-    const vaultAPI = (window as any).vaultAPI as { saveFile: (p: string, c: string) => Promise<void> }
+    if (!window.vaultAPI) return
     const date = new Date().toISOString().slice(0, 10)
     const lines = [
       '---',
@@ -559,7 +558,7 @@ export default function ConfluenceTab() {
       ...extractedKeywords.map(k => `- ${k}`),
     ]
     try {
-      await vaultAPI.saveFile(vaultPath + '/keywords.md', lines.join('\n'))
+      await window.vaultAPI.saveFile(vaultPath + '/keywords.md', lines.join('\n'))
       setKeywordSaveStatus('done')
     } catch {
       setKeywordSaveStatus('idle')
@@ -571,14 +570,12 @@ export default function ConfluenceTab() {
     if (archiveReviews.length === 0 || !activeDirRef.current || !archiveDirRef.current) return
 
     setArchiveMoveStatus('running')
-    const vaultAPI = (window as any).vaultAPI as {
-      moveFile: (absolutePath: string, destFolderPath: string) => Promise<{ success: boolean; newPath: string }>
-    }
+    if (!window.vaultAPI) return
     let moved = 0
     for (const r of archiveReviews) {
       try {
         const src = activeDirRef.current + '/' + r.filename
-        await vaultAPI.moveFile(src, archiveDirRef.current)
+        await window.vaultAPI.moveFile(src, archiveDirRef.current)
         moved++
       } catch { /* Skip move failures */ }
     }

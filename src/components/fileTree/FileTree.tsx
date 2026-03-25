@@ -10,7 +10,7 @@ import { useVaultStore } from '@/stores/vaultStore'
 import { useGraphStore } from '@/stores/graphStore'
 import { useUIStore } from '@/stores/uiStore'
 import { useTrashStore } from '@/stores/trashStore'
-import { parseVaultFiles } from '@/lib/markdownParser'
+import { parseVaultFilesAsync } from '@/lib/markdownParser'
 import { buildGraph } from '@/lib/graphBuilder'
 import SearchBar from './SearchBar'
 import SpeakerGroup from './SpeakerGroup'
@@ -208,7 +208,7 @@ export default function FileTree() {
     if (!vaultPath || !window.vaultAPI) return []
     const { files, folders } = await window.vaultAPI.loadFiles(vaultPath)
     if (!files) return []
-    const docs = parseVaultFiles(files) as LoadedDocument[]
+    const docs = await parseVaultFilesAsync(files) as LoadedDocument[]
     setLoadedDocuments(docs)
     setVaultFolders(folders ?? [])
     rebuildGraph(docs)

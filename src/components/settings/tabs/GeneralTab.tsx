@@ -1,9 +1,11 @@
 import { Globe, Sun, Moon, Monitor, Zap } from 'lucide-react'
-import { useSettingsStore, type AppTheme, type ParagraphRenderQuality } from '@/stores/settingsStore'
+import { useSettingsStore, type ParagraphRenderQuality } from '@/stores/settingsStore'
+import { useUIStore } from '@/stores/uiStore'
+import type { ThemeId } from '@/types'
 import VaultSelector from '../VaultSelector'
 
-const THEMES: { id: AppTheme; label: string; Icon: React.ElementType }[] = [
-  { id: 'light', label: 'Light',    Icon: Sun     },
+const THEMES: { id: ThemeId; label: string; Icon: React.ElementType }[] = [
+  { id: 'white', label: 'Light',    Icon: Sun     },
   { id: 'dark',  label: 'Dark',     Icon: Moon    },
   { id: 'oled',  label: 'OLED Black', Icon: Monitor },
 ]
@@ -15,7 +17,8 @@ const PARAGRAPH_QUALITIES: { id: ParagraphRenderQuality; label: string; desc: st
 ]
 
 export default function GeneralTab() {
-  const { theme, setTheme, editorDefaultLocked, setEditorDefaultLocked, paragraphRenderQuality, setParagraphRenderQuality, showNodeLabels, toggleNodeLabels } = useSettingsStore()
+  const { theme, setTheme } = useUIStore()
+  const { editorDefaultLocked, setEditorDefaultLocked, paragraphRenderQuality, setParagraphRenderQuality, showNodeLabels, toggleNodeLabels } = useSettingsStore()
 
   return (
     <div className="flex flex-col gap-7">

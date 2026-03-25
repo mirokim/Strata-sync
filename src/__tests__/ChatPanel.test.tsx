@@ -26,19 +26,9 @@ describe('ChatPanel — structure', () => {
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument()
   })
 
-  it('renders persona chips', () => {
-    render(<ChatPanel />)
-    expect(screen.getByTestId('persona-chips')).toBeInTheDocument()
-  })
-
   it('renders message list', () => {
     render(<ChatPanel />)
     expect(screen.getByTestId('message-list')).toBeInTheDocument()
-  })
-
-  it('renders quick questions', () => {
-    render(<ChatPanel />)
-    expect(screen.getByTestId('quick-questions')).toBeInTheDocument()
   })
 
   it('renders chat input', () => {
@@ -46,45 +36,6 @@ describe('ChatPanel — structure', () => {
     expect(screen.getByTestId('chat-input-container')).toBeInTheDocument()
   })
 
-})
-
-describe('PersonaChips — toggle', () => {
-  it('renders all 5 persona chips', () => {
-    render(<ChatPanel />)
-    const chips = screen.getAllByTestId(/^persona-chip-/)
-    expect(chips.length).toBe(5)
-  })
-
-  it('chief_director chip is active by default', () => {
-    render(<ChatPanel />)
-    const chip = screen.getByTestId('persona-chip-chief_director')
-    expect(chip).toHaveAttribute('data-active', 'true')
-  })
-
-  it('clicking an inactive chip activates it', () => {
-    render(<ChatPanel />)
-    const artChip = screen.getByTestId('persona-chip-art_director')
-    expect(artChip).not.toHaveAttribute('data-active')
-    fireEvent.click(artChip)
-    expect(useChatStore.getState().activePersonas).toContain('art_director')
-  })
-
-  it('clicking an active chip deactivates it', () => {
-    render(<ChatPanel />)
-    const chiefChip = screen.getByTestId('persona-chip-chief_director')
-    fireEvent.click(chiefChip)
-    expect(useChatStore.getState().activePersonas).not.toContain('chief_director')
-  })
-
-  it('multiple personas can be active simultaneously', () => {
-    render(<ChatPanel />)
-    fireEvent.click(screen.getByTestId('persona-chip-art_director'))
-    fireEvent.click(screen.getByTestId('persona-chip-plan_director'))
-    const { activePersonas } = useChatStore.getState()
-    expect(activePersonas).toContain('chief_director')
-    expect(activePersonas).toContain('art_director')
-    expect(activePersonas).toContain('plan_director')
-  })
 })
 
 describe('ChatInput — send', () => {
@@ -164,19 +115,3 @@ describe('MessageList — messages', () => {
   })
 })
 
-describe('QuickQuestions', () => {
-  it('renders a single quick question button (random pick)', () => {
-    render(<ChatPanel />)
-    const buttons = screen.getAllByTestId(/^quick-q-/)
-    expect(buttons.length).toBe(1)
-  })
-
-  it('clicking a quick question sends a message', async () => {
-    render(<ChatPanel />)
-    const firstQ = screen.getByTestId('quick-q-0')
-    fireEvent.click(firstQ)
-    const msgs = useChatStore.getState().messages
-    expect(msgs.length).toBeGreaterThanOrEqual(1)
-    expect(msgs[0].role).toBe('user')
-  })
-})

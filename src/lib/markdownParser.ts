@@ -163,6 +163,28 @@ export function parseMarkdownFile(file: VaultFile): LoadedDocument {
     ? data.links.map(String)
     : []
 
+  // ── source / origin / title (external import metadata) ────────────────────
+  const source = typeof data.source === 'string' ? data.source.trim() : undefined
+  const origin = typeof data.origin === 'string' ? data.origin.trim() : undefined
+  const title  = typeof data.title  === 'string' ? data.title.trim()  : undefined
+
+  // ── type (document type) ──────────────────────────────────────────────────
+  const type = typeof data.type === 'string' ? data.type.trim().toLowerCase() : undefined
+
+  // ── status / superseded_by (document lifecycle) ───────────────────────────
+  const status      = typeof data.status       === 'string' ? data.status.trim().toLowerCase()       : undefined
+  const supersededBy = typeof data.superseded_by === 'string' ? data.superseded_by.trim()            : undefined
+
+  // ── related (structural hub links from frontmatter) ───────────────────────
+  const related: string[] = Array.isArray(data.related)
+    ? data.related.map((r: unknown) => String(r).trim()).filter(Boolean)
+    : typeof data.related === 'string' ? data.related.split(',').map((s: string) => s.trim()).filter(Boolean)
+    : []
+
+  // ── graph_weight (Graph RAG link weight hint) ─────────────────────────────
+  const rawGraphWeight = typeof data.graph_weight === 'string' ? data.graph_weight.trim().toLowerCase() : ''
+  const graphWeight = (rawGraphWeight === 'low' || rawGraphWeight === 'skip') ? rawGraphWeight as 'low' | 'skip' : undefined
+
   const docId = filePathToDocId(file.relativePath)
   const sections = parseSections(body, docId)
 
@@ -195,6 +217,14 @@ export function parseMarkdownFile(file: VaultFile): LoadedDocument {
     sections,
     rawContent: file.content,
     imageRefs: allImageRefs.size > 0 ? [...allImageRefs] : undefined,
+    source,
+    origin,
+    title,
+    type,
+    status,
+    supersededBy,
+    related: related.length > 0 ? related : undefined,
+    graphWeight,
   }
 }
 
@@ -231,6 +261,8 @@ export function parseVaultFiles(files: VaultFile[]): LoadedDocument[] {
   const results: LoadedDocument[] = []
   const seenIds = new Set<string>()
   for (const file of files) {
+    // Exclude .archive/ folder files from Graph RAG exploration
+    if (file.relativePath.replace(/\\/g, '/').split('/').some(p => p === '.archive')) continue
     try {
       pushWithUniqueId(parseMarkdownFile(file), file.relativePath, results, seenIds)
     } catch (err) {
@@ -243,7 +275,7 @@ export function parseVaultFiles(files: VaultFile[]): LoadedDocument[] {
 // ── parseVaultFilesAsync ──────────────────────────────────────────────────────
 
 /** Number of files parsed per chunk before yielding to the event loop. */
-const PARSE_CHUNK = 10
+const PARSE_CHUNK = 50
 
 /**
  * Async version of parseVaultFiles that yields to the event loop every
@@ -262,6 +294,8 @@ export async function parseVaultFilesAsync(
 
   for (let i = 0; i < total; i++) {
     const file = files[i]
+    // Exclude .archive/ folder files from Graph RAG exploration
+    if (file.relativePath.replace(/\\/g, '/').split('/').some(p => p === '.archive')) continue
     try {
       pushWithUniqueId(parseMarkdownFile(file), file.relativePath, results, seenIds)
     } catch (err) {

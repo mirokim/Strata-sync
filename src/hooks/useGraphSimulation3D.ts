@@ -3,6 +3,13 @@ import { useGraphStore } from '@/stores/graphStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { GraphNode } from '@/types'
 
+/** Compute cluster group key — tag uses first tag, folder uses top-level folder name */
+function getClusterKey(node: GraphNode, mode: 'tag' | 'folder'): string {
+  if (mode === 'tag') return node.tags?.[0] ?? '__none__'
+  if (mode === 'folder') return node.folderPath?.split(/[/\\]/)[0] ?? '__root__'
+  return '__none__'
+}
+
 export interface SimNode3D extends GraphNode {
   x: number
   y: number
@@ -34,7 +41,7 @@ interface Options {
  * so unconnected components all converge near (0,0,0).
  */
 export function useGraphSimulation3D({ onTick }: Options) {
-  const { nodes, links, physics } = useGraphStore()
+  const { nodes, links, physics, clusterMode } = useGraphStore()
   const isFast = useSettingsStore(s => s.paragraphRenderQuality === 'fast')
   const isFastRef = useRef(isFast)
   isFastRef.current = isFast
@@ -48,6 +55,8 @@ export function useGraphSimulation3D({ onTick }: Options) {
   // Shared mutable ref so the reheat effect can update gravity strength
   // without reinitialising the whole simulation.
   const gravityStrengthRef = useRef(physics.centerForce * 0.1)
+  const clusterModeRef = useRef(clusterMode)
+  clusterModeRef.current = clusterMode
 
   // Initialize (or reinitialize) simulation when nodes/links dataset changes
   useEffect(() => {
@@ -95,6 +104,30 @@ export function useGraphSimulation3D({ onTick }: Options) {
             n.vz -= n.z * g * alpha
           }
         })
+        // Cluster force: pull nodes with the same tag/folder toward a shared centroid
+        .force('cluster', (alpha: number) => {
+          const mode = clusterModeRef.current
+          if (mode === 'none') return
+          // Compute per-group centroids
+          const centroidSum = new Map<string, { x: number; y: number; z: number; n: number }>()
+          for (const n of sNodes) {
+            const key = getClusterKey(n, mode)
+            const c = centroidSum.get(key) ?? { x: 0, y: 0, z: 0, n: 0 }
+            c.x += n.x; c.y += n.y; c.z += n.z; c.n++
+            centroidSum.set(key, c)
+          }
+          const clusterStrength = 0.15
+          for (const n of sNodes) {
+            const key = getClusterKey(n, mode)
+            const c = centroidSum.get(key)!
+            const cx = c.x / c.n
+            const cy = c.y / c.n
+            const cz = c.z / c.n
+            n.vx += (cx - n.x) * clusterStrength * alpha
+            n.vy += (cy - n.y) * clusterStrength * alpha
+            n.vz += (cz - n.z) * clusterStrength * alpha
+          }
+        })
 
       // Fast mode: stop after fewer ticks (runs via RAF, not sync — avoids main-thread block
       // and ensures scene meshes are built before the first onTick fires)
@@ -119,7 +152,7 @@ export function useGraphSimulation3D({ onTick }: Options) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, links])
 
-  // Reheat when physics params or quality mode change
+  // Reheat when physics params, quality mode, or cluster mode change
   useEffect(() => {
     gravityStrengthRef.current = physics.centerForce * 0.1
     const sim = simRef.current as any
@@ -131,10 +164,10 @@ export function useGraphSimulation3D({ onTick }: Options) {
     } else {
       // Re-attach tick handler in case it was missing (e.g. switched from fast mode)
       sim.on('tick', () => onTickRef.current(simNodesRef.current, simLinksRef.current))
-      // 'center' is a closure that reads gravityStrengthRef.current — no re-registration needed
+      // 'center' and 'cluster' are closures reading refs — no re-registration needed
       sim.alpha(0.3).restart()
     }
-  }, [physics, isFast])
+  }, [physics, isFast, clusterMode])
 
   return { simRef, simNodesRef, simLinksRef }
 }

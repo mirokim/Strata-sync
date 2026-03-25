@@ -11,8 +11,9 @@ export default function TopBar() {
     leftPanelCollapsed, rightPanelCollapsed,
     setGraphMode, setPanelOpacity,
     toggleLeftPanel, toggleRightPanel,
+    toggleSettingsPanel,
   } = useUIStore()
-  const { toggleSettingsPanel, toggleNodeLabels } = useSettingsStore()
+  const { toggleNodeLabels } = useSettingsStore()
   const isFast = useSettingsStore(s => s.paragraphRenderQuality === 'fast')
   const showNodeLabels = useSettingsStore(s => s.showNodeLabels)
 

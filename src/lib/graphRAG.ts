@@ -24,6 +24,7 @@ import {
   detectBridgeNodes,
   getClusterTopics,
 } from '@/lib/graphAnalysis'
+import { runPPRInWorker } from '@/lib/pprWorkerClient'
 
 // ── Persona tag affinity map ──────────────────────────────────────────────────
 
@@ -175,6 +176,9 @@ export function frontendKeywordSearch(
         const hasPersonaTag = personaTag
           ? tags.some(t => t.toLowerCase() === personaTag)
           : false
+        // Outdated/deprecated document penalty
+        const docStatus = doc?.status
+        const outdatedPenalty = (docStatus === 'outdated' || docStatus === 'deprecated') ? -0.25 : 0
         return {
           doc_id: hit.docId,
           filename: hit.filename,
@@ -186,7 +190,7 @@ export function frontendKeywordSearch(
               ? bestSection.body.slice(0, 400).trimEnd() + '…'
               : bestSection.body)
             : '',
-          score: Math.min(1, hit.score + (hasPersonaTag ? TAG_BOOST : 0)),
+          score: Math.max(0, Math.min(1, hit.score + (hasPersonaTag ? TAG_BOOST : 0) + outdatedPenalty)),
           tags,
         } satisfies SearchResult
       })
@@ -326,18 +330,29 @@ let _cachedAdjacency: Map<string, string[]> | null = null
 let _cachedSectionMap: Map<string, { section: DocSection; filename: string; docId: string }> | null = null
 let _cachedDocMap: Map<string, LoadedDocument> | null = null
 let _cachedMetrics: ReturnType<typeof getGraphMetrics> | null = null
-let _cachedLinksRef: GraphLink[] | null = null
-let _cachedDocsRef: LoadedDocument[] | null = null
+let _cachedLinksKey: string = ''
+let _cachedDocsKey: string = ''
+
+/** Content-based fingerprint — length + first/middle/last ID sample */
+function arrayKey<T extends { id?: string; source?: unknown; target?: unknown }>(arr: T[]): string {
+  const n = arr.length
+  if (n === 0) return '0'
+  const mid = arr[Math.floor(n / 2)] as { id?: string }
+  const first = arr[0] as { id?: string }
+  const last = arr[n - 1] as { id?: string }
+  return `${n}:${first.id ?? ''}:${mid.id ?? ''}:${last.id ?? ''}`
+}
 
 function getCachedMaps(links: GraphLink[], docs: LoadedDocument[]) {
-  // Invalidate when array reference changes
-  if (links !== _cachedLinksRef || docs !== _cachedDocsRef) {
+  const linksKey = arrayKey(links as { id?: string }[])
+  const docsKey = arrayKey(docs)
+  if (linksKey !== _cachedLinksKey || docsKey !== _cachedDocsKey) {
     _cachedAdjacency = buildAdjacencyMap(links)
     _cachedSectionMap = buildSectionMap(docs)
     _cachedDocMap = new Map(docs.map(d => [d.id, d]))
     _cachedMetrics = null  // invalidate metrics — recomputed on next call
-    _cachedLinksRef = links
-    _cachedDocsRef = docs
+    _cachedLinksKey = linksKey
+    _cachedDocsKey = docsKey
   }
   return {
     adjacency: _cachedAdjacency!,
@@ -457,8 +472,6 @@ export function rerankResults(
   // Build docMap once for recency lookups (O(n) outside the loop)
   const { loadedDocuments: _docs } = useVaultStore.getState()
   const _docMap = _docs ? new Map(_docs.map(d => [d.id, d])) : new Map<string, LoadedDocument>()
-  const now = Date.now()
-  const RECENCY_DECAY_MS = 90 * 24 * 60 * 60 * 1000  // 90-day half-life
 
   const scored = results.map(r => {
     // Check content using substring matching (handles Korean particles in content too)
@@ -481,11 +494,11 @@ export function rerankResults(
     const pTag = currentSpeaker ? PERSONA_TAG_MAP[currentSpeaker] : undefined
     const tagBoost = pTag && r.tags?.some(t => t.toLowerCase() === pTag) ? 0.15 : 0
 
-    // Recency boost: recent docs get up to +5% (exponential decay, 90-day half-life)
-    const recMs = (() => { const d = _docMap.get(r.doc_id); return d ? getDocRecency(d) : 0 })()
-    const recencyBoost = recMs > 0 ? 0.05 * Math.exp(-(now - recMs) / RECENCY_DECAY_MS) : 0
+    // Outdated/deprecated document penalty
+    const docStatus = _docMap.get(r.doc_id)?.status
+    const outdatedPenalty = (docStatus === 'outdated' || docStatus === 'deprecated') ? -0.3 : 0
 
-    const finalScore = 0.6 * r.score + 0.3 * keywordScore + speakerBoost + tagBoost + recencyBoost
+    const finalScore = 0.6 * r.score + 0.3 * keywordScore + speakerBoost + tagBoost + outdatedPenalty
 
     return { result: r, finalScore }
   })
@@ -633,20 +646,25 @@ const DEEP_CONTEXT_BUDGET = 16_000
 const HOP_CHAR_BUDGET = [1_500, 900, 500, 250] as const
 
 /**
- * Traverses the graph via BFS and collects content from connected documents.
+ * PPR-based graph traversal to collect related document context.
  *
- * Unlike the current RAG (1-hop + 300 chars), follows wikilinks up to maxHops hops
- * and collects content from all related documents. Budget per document decreases with hop distance.
+ * Starts from TF-IDF seeds, runs strength-weighted PPR via Web Worker,
+ * then selects the top-scoring maxDocs documents.
+ * Unlike BFS, PPR has no hop limit and automatically captures
+ * strongly-connected hub documents.
  *
  * Use cases: "insights related to this topic", "give me project feedback" —
  * queries that need to gather information across multiple documents.
+ *
+ * @param maxHops    Unused (kept for API compatibility — PPR has no hop concept)
  */
-export function buildDeepGraphContext(
+export async function buildDeepGraphContext(
   results: SearchResult[],
   maxHops: number = 2,
   maxDocs: number = 14,
-  queryTerms?: string[]
-): string {
+  queryTerms?: string[],
+  currentSpeaker?: string,
+): Promise<string> {
   const { links } = useGraphStore.getState()
   const { loadedDocuments } = useVaultStore.getState()
   if (!loadedDocuments?.length) {
@@ -676,10 +694,11 @@ export function buildDeepGraphContext(
   }
 
   // Starting nodes: top documents from search results (deduplicated)
-  const startDocIds = [...new Set(results.map(r => r.doc_id).filter(Boolean))]
+  const _startSet = new Set<string>()
+  for (const r of results) { if (r.doc_id) _startSet.add(r.doc_id) }
+  const startDocIds = [..._startSet]
 
   // If keyword matching is weak, auto-supplement with hub nodes as seeds
-  // (coverage is too narrow when there are 0 or 1 seeds)
   if (startDocIds.length < 2) {
     const hubIds = getHubDocIds(adjacency, 5)
     for (const id of hubIds) {
@@ -690,49 +709,76 @@ export function buildDeepGraphContext(
 
   if (startDocIds.length === 0) return ''
 
-  // BFS traversal
-  const visited = bfsFromDocIds(startDocIds, adjacency, maxHops, maxDocs)
-  if (visited.size === 0) return ''
+  // PPR execution — async via Web Worker (no main thread blocking)
+  const pprScores = await runPPRInWorker(startDocIds, links)
 
-  // Sort by hop distance (within same hop, newest documents first)
-  const rec = (id: string) => { const d = docMap.get(id); return d ? getDocRecency(d) : 0 }
-  const sorted = [...visited.entries()].sort((a, b) =>
-    a[1] !== b[1] ? a[1] - b[1] : rec(b[0]) - rec(a[0])
+  // Select top maxDocs by PPR score (exclude score=0)
+  // Outdated/deprecated docs get 70% decay; graphWeight adjustments apply
+  const seedSet = new Set(startDocIds)
+  const _pprEntries: [string, number][] = []
+  for (const [id, score] of pprScores) {
+    if (score <= 0) continue
+    const doc = docMap.get(id)
+    // graph_weight: skip — fully exclude from traversal (link-only hubs, 500+ outbound)
+    if (doc?.graphWeight === 'skip') continue
+    const docStatus = doc?.status
+    const decay = (docStatus === 'outdated' || docStatus === 'deprecated') ? 0.3 : 1.0
+    // graph_weight: low — link weight 0.3 decay (100-499 outbound links)
+    const weightDecay = doc?.graphWeight === 'low' ? 0.3 : 1.0
+    // Speaker affinity boost: doc.speaker matches current persona -> +10%
+    const speakerBoost = (currentSpeaker && currentSpeaker !== 'unknown' && doc?.speaker === currentSpeaker) ? 1.1 : 1.0
+    _pprEntries.push([id, score * decay * weightDecay * speakerBoost])
+  }
+  _pprEntries.sort((a, b) => b[1] - a[1])
+  const sorted = _pprEntries.slice(0, maxDocs)
+
+  if (sorted.length === 0) return ''
+
+  // Build visited Map for buildStructureHeader compatibility (seed=0, rest=1)
+  const visited = new Map<string, number>(
+    sorted.map(([id]) => [id, seedSet.has(id) ? 0 : 1])
   )
 
-  // Structure header (PageRank + cluster overview)
-  const structureHeader = buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
+  // Yield to event loop before heavy computation
+  await new Promise<void>(r => setTimeout(r, 0))
 
-  const hopLabel = ['Direct', '1-hop', '2-hop', '3-hop']
-  const parts: string[] = [structureHeader, '## Related Documents (Graph Traversal)\n']
+  // Structure header (PageRank + cluster overview)
+  const structureHeader = await buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
+
+  // PPR rank-based labels and char budgets
+  // Top 3: core (1500 chars), 4-8: related (900 chars), 9+: peripheral (500 chars)
+  const parts: string[] = [structureHeader, '## Related Documents (PPR Traversal)\n']
   let charCount = structureHeader.length + 20
   let docHits = 0
 
-  for (const [docId, hop] of sorted) {
-    if (charCount >= DEEP_CONTEXT_BUDGET) break
+  sorted.forEach(([docId, pprScore], rank) => {
+    if (charCount >= DEEP_CONTEXT_BUDGET) return
 
     const doc = docMap.get(docId)
-    if (!doc) continue  // phantom node or ID mismatch — skip
+    if (!doc) return  // phantom node — skip
 
-    const budget = HOP_CHAR_BUDGET[hop] ?? 80
-    const label = hopLabel[hop] ?? `${hop}-hop`
+    const budget = rank < 3 ? 1_500 : rank < 8 ? 900 : 500
+    const label = seedSet.has(docId) ? 'Core' : rank < 3 ? 'Core' : rank < 8 ? 'Related' : 'Peripheral'
     const name = doc.filename.replace(/\.md$/i, '')
     const speaker = doc.speaker && doc.speaker !== 'unknown' ? ` (${doc.speaker})` : ''
     const dateLabel = getDocDateLabel(doc)
-    const header = `[${label}] ${name}${speaker}${dateLabel ? ` [${dateLabel}]` : ''}`
+    const typeLabel = doc.type ? ` [${doc.type}]` : ''
+    const scorePct = Math.round(pprScore * 1000) / 10
+    const outdatedLabel = (doc.status === 'outdated' || doc.status === 'deprecated')
+      ? ` [outdated${doc.supersededBy ? ` -> ${doc.supersededBy}` : ''}]`
+      : ''
+    const header = `[${label}|PPR ${scorePct}]${outdatedLabel}${typeLabel} ${name}${speaker}${dateLabel ? ` [${dateLabel}]` : ''}`
 
-    // B. Passage-level retrieval: select the most relevant section when queryTerms are provided
     const content = getDocContent(doc, budget, queryTerms)
-
     const entry = `${header}\n${content}\n\n`
-    if (charCount + entry.length > DEEP_CONTEXT_BUDGET) break
+    if (charCount + entry.length > DEEP_CONTEXT_BUDGET) return
 
     parts.push(entry)
     charCount += entry.length
     docHits++
-  }
+  })
 
-  logger.debug(`[RAG] BFS complete: visited=${visited.size}, content included=${docHits} docs, total ${charCount} chars`)
+  logger.debug(`[RAG] PPR complete: candidates=${sorted.length}, content included=${docHits} docs, total ${charCount} chars`)
 
   // Fall back to direct TF-IDF result format when no actual document content is included
   if (docHits === 0) {
@@ -765,11 +811,11 @@ export function buildDeepGraphContext(
  * @param maxHops     Maximum hops to traverse (default 3)
  * @param maxDocs     Maximum documents to collect (default 20)
  */
-export function buildDeepGraphContextFromDocId(
+export async function buildDeepGraphContextFromDocId(
   startDocId: string,
   maxHops: number = 3,
   maxDocs: number = 20
-): string {
+): Promise<string> {
   const { links } = useGraphStore.getState()
   const { loadedDocuments } = useVaultStore.getState()
   if (!loadedDocuments?.length || !links.length) return ''
@@ -779,7 +825,8 @@ export function buildDeepGraphContextFromDocId(
   const visited = bfsFromDocIds([startDocId], adjacency, maxHops, maxDocs)
   if (visited.size === 0) return ''
 
-  const structureHeader = buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
+  await new Promise<void>(r => setTimeout(r, 0))
+  const structureHeader = await buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
 
   const rec2 = (id: string) => { const d = docMap.get(id); return d ? getDocRecency(d) : 0 }
   const sorted = [...visited.entries()].sort((a, b) =>
@@ -822,14 +869,14 @@ export function buildDeepGraphContextFromDocId(
  *  - D. Bridge documents connecting multiple clusters
  *  - A. Hidden semantically connected document pairs with no WikiLinks
  */
-function buildStructureHeader(
+async function buildStructureHeader(
   visited: Map<string, number>,
   adjacency: Map<string, string[]>,
   links: GraphLink[],
   loadedDocuments: LoadedDocument[],
   docMap: Map<string, LoadedDocument>,
   getMetrics: () => ReturnType<typeof getGraphMetrics>
-): string {
+): Promise<string> {
   const metrics = getMetrics()  // cached — no recomputation if adjacency/links unchanged
   const { pageRank, clusters, clusterCount } = metrics
 
@@ -840,7 +887,8 @@ function buildStructureHeader(
     .slice(0, 5)
     .map(({ id }) => docMap.get(id)?.filename.replace(/\.md$/i, '') ?? id)
 
-  // C. Document groups per cluster + TF-IDF topic keyword labels
+  // C. Document groups per cluster + TF-IDF topic keyword labels (yield to UI on cache miss)
+  await new Promise<void>(r => setTimeout(r, 0))
   const clusterTopics = getClusterTopics(clusters, loadedDocuments, 3)
   const clusterGroups = new Map<number, string[]>()
   for (const [docId] of visited) {
@@ -872,7 +920,8 @@ function buildStructureHeader(
       return `${name}(${b.clusterCount} clusters connected)`
     })
 
-  // A. Implicit link discovery (semantically similar pairs without WikiLinks, top 4)
+  // A. Implicit link discovery (semantically similar pairs without WikiLinks, top 4) — yield on cache miss
+  await new Promise<void>(r => setTimeout(r, 0))
   const implicitLinks = tfidfIndex.findImplicitLinks(adjacency, 4, 0.25)
     .map(l => {
       const a = l.filenameA.replace(/\.md$/i, '')
@@ -967,10 +1016,10 @@ function getHubDocIds(adjacency: Map<string, string[]>, topN: number = 10): stri
  * @param maxDocs   Maximum documents to collect (default 35)
  * @param maxHops   Maximum BFS hops (default 4)
  */
-export function buildGlobalGraphContext(
+export async function buildGlobalGraphContext(
   maxDocs: number = 35,
   maxHops: number = 4
-): string {
+): Promise<string> {
   const { links } = useGraphStore.getState()
   const { loadedDocuments } = useVaultStore.getState()
   if (!loadedDocuments?.length || !links.length) return ''
@@ -983,7 +1032,7 @@ export function buildGlobalGraphContext(
   const visited = bfsFromDocIds(hubIds, adjacency, maxHops, maxDocs)
   if (visited.size === 0) return ''
 
-  const structureHeader = buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
+  const structureHeader = await buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
 
   const GLOBAL_BUDGET = 24000
   const rec3 = (id: string) => { const d = docMap.get(id); return d ? getDocRecency(d) : 0 }

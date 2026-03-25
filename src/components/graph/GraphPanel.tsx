@@ -75,11 +75,11 @@ export default function GraphPanel() {
     if (selectedNodeId) {
       const doc = loadedDocuments?.find(d => d.id === selectedNodeId)
       nodeName = doc?.filename.replace(/\.md$/i, '') ?? selectedNodeId
-      context = buildDeepGraphContextFromDocId(selectedNodeId)
+      context = await buildDeepGraphContextFromDocId(selectedNodeId)
       setAiHighlightNodes(getBfsContextDocIds(selectedNodeId))
     } else {
       nodeName = 'Entire Project'
-      context = buildGlobalGraphContext(35, 4)
+      context = await buildGlobalGraphContext(35, 4)
       setAiHighlightNodes(getGlobalContextDocIds(35, 4))
     }
 

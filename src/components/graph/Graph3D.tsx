@@ -6,7 +6,7 @@ import { useGraphStore } from '@/stores/graphStore'
 import { useUIStore } from '@/stores/uiStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useVaultStore } from '@/stores/vaultStore'
-import { parseVaultFiles } from '@/lib/markdownParser'
+import { parseVaultFilesAsync } from '@/lib/markdownParser'
 import { buildGraph } from '@/lib/graphBuilder'
 import type { LoadedDocument } from '@/types'
 import { useGraphSimulation3D, type SimNode3D, type SimLink3D } from '@/hooks/useGraphSimulation3D'
@@ -825,9 +825,9 @@ export default function Graph3D({ width, height }: Props) {
               const newPath = `${vaultPath}${sep}${label}.md`
               window.vaultAPI.saveFile(newPath, `# ${label}\n\n`).then(() => {
                 return window.vaultAPI!.loadFiles(vaultPath)
-              }).then(({ files }) => {
+              }).then(async ({ files }) => {
                 if (!files) return
-                const docs = parseVaultFiles(files) as LoadedDocument[]
+                const docs = await parseVaultFilesAsync(files) as LoadedDocument[]
                 setLoadedDocuments(docs)
                 const { nodes: newNodes, links: newLinks } = buildGraph(docs)
                 setNodes(newNodes)

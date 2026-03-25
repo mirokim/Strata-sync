@@ -38,6 +38,11 @@ function resetMockState() {
   _mockShouldThrow = false
 }
 
+/** Flush the 50ms chunk batch timer so buffered chunks are applied to state */
+function flushChunkBuffer() {
+  vi.advanceTimersByTime(50)
+}
+
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -92,7 +97,7 @@ describe('useChatStore — setPersonas()', () => {
 // ── appendChunk / finishStreaming ──────────────────────────────────────────────
 
 describe('useChatStore — appendChunk() / finishStreaming()', () => {
-  it('appendChunk appends text to the target message', () => {
+  it('appendChunk appends text to the target message after flush', () => {
     useChatStore.setState({
       messages: [
         { id: 'msg1', persona: 'chief_director', role: 'assistant', content: 'Hello', timestamp: 1, streaming: true },
@@ -101,6 +106,7 @@ describe('useChatStore — appendChunk() / finishStreaming()', () => {
       isLoading: true,
     })
     useChatStore.getState().appendChunk('msg1', ' World')
+    flushChunkBuffer()
     const msg = useChatStore.getState().messages[0]
     expect(msg.content).toBe('Hello World')
   })
@@ -115,6 +121,7 @@ describe('useChatStore — appendChunk() / finishStreaming()', () => {
       isLoading: true,
     })
     useChatStore.getState().appendChunk('msg1', '-appended')
+    flushChunkBuffer()
     const msgs = useChatStore.getState().messages
     expect(msgs[0].content).toBe('A-appended')
     expect(msgs[1].content).toBe('B') // unchanged
@@ -209,6 +216,121 @@ describe('useChatStore — sendMessage()', () => {
     const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
     expect(assistantMsg?.content).toContain('[Error]')
     expect(assistantMsg?.streaming).toBe(false)
+  })
+})
+
+// ── stopStreaming ──────────────────────────────────────────────────────────────
+
+describe('useChatStore — stopStreaming()', () => {
+  it('sets isLoading to false', () => {
+    useChatStore.setState({ isLoading: true })
+    useChatStore.getState().stopStreaming()
+    expect(useChatStore.getState().isLoading).toBe(false)
+  })
+
+  it('can be called safely when nothing is streaming', () => {
+    useChatStore.setState({ isLoading: false, messages: [] })
+    expect(() => useChatStore.getState().stopStreaming()).not.toThrow()
+    expect(useChatStore.getState().isLoading).toBe(false)
+  })
+})
+
+// ── appendThinkingChunk ─────────────────────────────────────────────────────────
+
+describe('useChatStore — appendThinkingChunk()', () => {
+  it('appends thinking content to the correct message after flush', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: '', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendThinkingChunk('msg1', 'thinking step 1')
+    flushChunkBuffer()
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.thinking).toBe('thinking step 1')
+  })
+
+  it('accumulates multiple thinking chunks', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: '', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendThinkingChunk('msg1', 'part1')
+    useChatStore.getState().appendThinkingChunk('msg1', ' part2')
+    flushChunkBuffer()
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.thinking).toBe('part1 part2')
+  })
+
+  it('does not affect content field', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: 'original', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendThinkingChunk('msg1', 'thinking...')
+    flushChunkBuffer()
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.content).toBe('original')
+    expect(msg.thinking).toBe('thinking...')
+  })
+
+  it('finishStreaming flushes pending thinking chunks', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: '', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendThinkingChunk('msg1', 'buffered thinking')
+    // Do NOT flush — finishStreaming should flush remaining thinking chunks itself
+    useChatStore.getState().finishStreaming('msg1')
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.thinking).toBe('buffered thinking')
+    expect(msg.streaming).toBe(false)
+  })
+})
+
+// ── Chunk batching behavior ─────────────────────────────────────────────────────
+
+describe('useChatStore — chunk batching', () => {
+  it('chunks are buffered until flush timer fires', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: '', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendChunk('msg1', 'hello')
+    // Before flush, content is still empty
+    expect(useChatStore.getState().messages[0].content).toBe('')
+    // After flush, content is updated
+    flushChunkBuffer()
+    expect(useChatStore.getState().messages[0].content).toBe('hello')
+  })
+
+  it('multiple chunks within same flush window are batched together', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'msg1', persona: 'chief_director', role: 'assistant', content: '', timestamp: 1, streaming: true },
+      ],
+      activePersonas: ['chief_director'],
+      isLoading: true,
+    })
+    useChatStore.getState().appendChunk('msg1', 'a')
+    useChatStore.getState().appendChunk('msg1', 'b')
+    useChatStore.getState().appendChunk('msg1', 'c')
+    flushChunkBuffer()
+    expect(useChatStore.getState().messages[0].content).toBe('abc')
   })
 })
 

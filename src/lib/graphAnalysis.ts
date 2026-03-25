@@ -1,13 +1,14 @@
 /**
  * graphAnalysis.ts
  *
- * Provides six analysis tools:
- *   A. TfIdfIndex      — Cosine similarity-based document search + implicit link discovery
+ * Provides analysis tools:
+ *   A. TfIdfIndex      — BM25 cosine similarity-based document search + implicit link discovery
  *   B. computePageRank — Document ranking by link importance (hub detection)
  *   C. detectClusters  — Union-Find connected components (topic cluster detection)
  *   D. detectBridgeNodes — Bridge node detection connecting multiple clusters
  *   E. getClusterTopics  — Top TF-IDF keyword extraction per cluster
  *   F. findImplicitLinks — Hidden semantically similar connections without WikiLinks
+ *   G. computeInsights   — Comprehensive vault analysis (hubs, orphans, gaps, clusters)
  */
 
 import type { LoadedDocument } from '@/types'
@@ -24,7 +25,10 @@ const KO_SUFFIXES = [
   '에', '도', '만', '의', '로',
 ]
 
+const _stemCache = new Map<string, string[]>()
 function stemKorean(token: string): string[] {
+  const cached = _stemCache.get(token)
+  if (cached) return cached
   const results = [token]
   for (const suffix of KO_SUFFIXES) {
     if (token.endsWith(suffix) && token.length > suffix.length + 1) {
@@ -32,13 +36,15 @@ function stemKorean(token: string): string[] {
       break
     }
   }
-  return [...new Set(results)]
+  const out = results.length === 1 ? results : [...new Set(results)]
+  _stemCache.set(token, out)
+  return out
 }
 
 export function tokenize(text: string): string[] {
   // Korean number+unit separation: "28일" → "28 일", "1월" → "1 월"
   // This ensures "28" from a query like "28일" matches "28" in a filename like "[2026.01.28]"
-  const normalized = text.replace(/(\d+)(년|월|일|시|분|초|개|명|번|회|차)/g, '$1 $2')
+  const normalized = text.replace(/(\d+)(년|월|일|주|시간|시|분|초|개|명|번|회|차)/g, '$1 $2')
   const raw = normalized
     .toLowerCase()
     .split(/[\s,.\-_?!;:()[\]{}'"《》「」【】]+/)
@@ -50,10 +56,10 @@ export function tokenize(text: string): string[] {
       stems.push(stem)
     }
   }
-  return [...new Set(stems)]
+  return stems
 }
 
-// ── A. TF-IDF Index ──────────────────────────────────────────────────────────
+// ── A. BM25 Index (upgraded from TF-IDF) ────────────────────────────────────
 
 export interface TfIdfResult {
   docId: string
@@ -62,12 +68,14 @@ export interface TfIdfResult {
   score: number
 }
 
-interface TfIdfDoc {
+interface BM25Doc {
   docId: string
   filename: string
   speaker: string
-  vector: Map<string, number>
-  norm: number
+  termFreqs: Map<string, number>  // Raw term frequencies
+  docLen: number                   // Total tokens in document
+  bm25Vec: Map<string, number>    // Normalized BM25 vector (for implicit link similarity)
+  bm25Norm: number
 }
 
 export interface ImplicitLink {
@@ -78,17 +86,33 @@ export interface ImplicitLink {
   similarity: number
 }
 
-// Serialized form stored in IndexedDB (Maps → plain arrays for JSON compatibility)
+/** BM25 parameters */
+const BM25_K1 = 1.5   // Term saturation coefficient — controls diminishing returns from frequency
+const BM25_B  = 0.75  // Document length normalization coefficient
+
+/** IndexedDB cache schema version — bump this to auto-invalidate cache on format change */
+export const TFIDF_SCHEMA_VERSION = 4
+
 export interface SerializedTfIdf {
-  schemaVersion: 3
+  schemaVersion: typeof TFIDF_SCHEMA_VERSION
   fingerprint: string
   idf: [string, number][]
-  docs: { docId: string; filename: string; speaker: string; vector: [string, number][]; norm: number }[]
+  avgdl: number
+  docs: {
+    docId: string
+    filename: string
+    speaker: string
+    termFreqs: [string, number][]
+    docLen: number
+    bm25Vec: [string, number][]
+    bm25Norm: number
+  }[]
 }
 
 export class TfIdfIndex {
-  private docs: TfIdfDoc[] = []
+  private docs: BM25Doc[] = []
   private idf: Map<string, number> = new Map()
+  private avgdl = 0
   private built = false
   private _implicitLinks: ImplicitLink[] | null = null
   private _implicitAdjRef: Map<string, string[]> | null = null
@@ -96,48 +120,59 @@ export class TfIdfIndex {
   get isBuilt() { return this.built }
   get docCount() { return this.docs.length }
 
-  /** Serialize index state to a plain object suitable for IndexedDB storage. */
+  /** Inject pre-computed implicit links from a Worker (cache warmup) */
+  setImplicitLinks(links: ImplicitLink[], adjacency: Map<string, string[]>): void {
+    this._implicitLinks = links
+    this._implicitAdjRef = adjacency
+  }
+
   serialize(fingerprint: string): SerializedTfIdf {
     return {
-      schemaVersion: 3,
+      schemaVersion: TFIDF_SCHEMA_VERSION,
       fingerprint,
       idf: [...this.idf.entries()],
+      avgdl: this.avgdl,
       docs: this.docs.map(d => ({
         docId: d.docId,
         filename: d.filename,
         speaker: d.speaker,
-        vector: [...d.vector.entries()],
-        norm: d.norm,
+        termFreqs: [...d.termFreqs.entries()],
+        docLen: d.docLen,
+        bm25Vec: [...d.bm25Vec.entries()],
+        bm25Norm: d.bm25Norm,
       })),
     }
   }
 
-  /** Restore index state from a previously serialized object. */
   restore(data: SerializedTfIdf): void {
     this.idf = new Map(data.idf)
+    this.avgdl = data.avgdl
     this.docs = data.docs.map(d => ({
       docId: d.docId,
       filename: d.filename,
       speaker: d.speaker,
-      vector: new Map(d.vector),
-      norm: d.norm,
+      termFreqs: new Map(d.termFreqs),
+      docLen: d.docLen,
+      bm25Vec: new Map(d.bm25Vec),
+      bm25Norm: d.bm25Norm,
     }))
     this._implicitLinks = null
     this._implicitAdjRef = null
     this.built = true
-    logger.debug(`[graphAnalysis] TF-IDF index restored from cache: ${this.docs.length} documents`)
+    logger.debug(`[graphAnalysis] BM25 index restored from cache: ${this.docs.length} documents`)
   }
 
   build(loadedDocuments: LoadedDocument[]): void {
     this.docs = []
     this.idf = new Map()
+    this.avgdl = 0
     this.built = false
 
-    const docTerms: Map<string, Map<string, number>> = new Map()
-    const docFreq: Map<string, number> = new Map()
+    const rawTermFreqs = new Map<string, Map<string, number>>()
+    const docLens = new Map<string, number>()
+    const docFreq = new Map<string, number>()
 
     for (const doc of loadedDocuments) {
-      // Combine filename + tags + speaker + all sections into a single text
       const allText = [
         doc.filename.replace(/\.md$/i, ''),
         doc.tags?.join(' ') ?? '',
@@ -147,54 +182,108 @@ export class TfIdfIndex {
       ].join(' ')
 
       const tokens = tokenize(allText)
-      const termCount = new Map<string, number>()
+      const termFreq = new Map<string, number>()
       for (const token of tokens) {
-        termCount.set(token, (termCount.get(token) ?? 0) + 1)
+        termFreq.set(token, (termFreq.get(token) ?? 0) + 1)
       }
-      docTerms.set(doc.id, termCount)
+      rawTermFreqs.set(doc.id, termFreq)
+      docLens.set(doc.id, tokens.length)
 
-      for (const term of termCount.keys()) {
+      for (const term of termFreq.keys()) {
         docFreq.set(term, (docFreq.get(term) ?? 0) + 1)
       }
     }
 
     const N = loadedDocuments.length
+    const totalLen = [...docLens.values()].reduce((a, b) => a + b, 0)
+    this.avgdl = N > 0 ? totalLen / N : 1
 
-    // Smoothed IDF: log((N+1)/(df+1)) + 1
+    // BM25 IDF: log((N - df + 0.5) / (df + 0.5) + 1)
     for (const [term, df] of docFreq) {
-      this.idf.set(term, Math.log((N + 1) / (df + 1)) + 1)
+      this.idf.set(term, Math.log((N - df + 0.5) / (df + 0.5) + 1))
     }
 
-    // TF-IDF vector + L2 norm calculation
+    // BM25 weight vector + L2 norm (for implicit link similarity)
     for (const doc of loadedDocuments) {
-      const termCount = docTerms.get(doc.id)!
-      const totalTerms = [...termCount.values()].reduce((a, b) => a + b, 0)
+      const termFreq = rawTermFreqs.get(doc.id)!
+      const docLen = docLens.get(doc.id)!
+      const lenNorm = 1 - BM25_B + BM25_B * (docLen / this.avgdl)
 
-      const vector = new Map<string, number>()
+      const bm25Vec = new Map<string, number>()
       let normSq = 0
-      for (const [term, count] of termCount) {
-        const tf = count / totalTerms
-        const idf = this.idf.get(term) ?? 1
-        const tfidf = tf * idf
-        vector.set(term, tfidf)
-        normSq += tfidf * tfidf
+      for (const [term, tf] of termFreq) {
+        const idfVal = this.idf.get(term) ?? 0
+        if (idfVal <= 0) continue
+        const w = idfVal * (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * lenNorm)
+        bm25Vec.set(term, w)
+        normSq += w * w
       }
 
       this.docs.push({
         docId: doc.id,
         filename: doc.filename,
         speaker: doc.speaker ?? 'unknown',
-        vector,
-        norm: Math.sqrt(normSq),
+        termFreqs: termFreq,
+        docLen,
+        bm25Vec,
+        bm25Norm: Math.sqrt(normSq),
       })
     }
 
-    // Invalidate implicit link cache on rebuild
     this._implicitLinks = null
     this._implicitAdjRef = null
-
     this.built = true
-    logger.debug(`[graphAnalysis] TF-IDF index built: ${this.docs.length} documents`)
+    logger.debug(`[graphAnalysis] BM25 index built: ${this.docs.length} documents, avgdl=${this.avgdl.toFixed(1)}`)
+  }
+
+  /**
+   * Single document incremental update — replaces one file without full rebuild.
+   * IDF is reused from existing values (approximation). avgdl is recalculated.
+   */
+  updateDoc(doc: LoadedDocument): void {
+    if (!this.built) return
+
+    // Remove existing document
+    const existingIdx = this.docs.findIndex(d => d.docId === doc.id)
+    if (existingIdx !== -1) this.docs.splice(existingIdx, 1)
+
+    // Tokenize new document
+    const allText = [
+      doc.filename.replace(/\.md$/i, ''),
+      doc.tags?.join(' ') ?? '',
+      doc.speaker ?? '',
+      ...doc.sections.map(s => `${s.heading} ${s.body}`),
+      doc.rawContent ?? '',
+    ].join(' ')
+    const tokens = tokenize(allText)
+    const termFreq = new Map<string, number>()
+    for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1)
+
+    const docLen = tokens.length
+    const totalLen = this.docs.reduce((a, d) => a + d.docLen, 0) + docLen
+    this.avgdl = (this.docs.length + 1) > 0 ? totalLen / (this.docs.length + 1) : 1
+
+    // BM25 vector computation (reuse existing IDF, approximate idf=1 for new terms)
+    const lenNorm = 1 - BM25_B + BM25_B * (docLen / this.avgdl)
+    const bm25Vec = new Map<string, number>()
+    let normSq = 0
+    for (const [term, tf] of termFreq) {
+      const idfVal = this.idf.get(term) ?? 1
+      const w = idfVal * (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * lenNorm)
+      bm25Vec.set(term, w)
+      normSq += w * w
+    }
+
+    this.docs.push({
+      docId: doc.id,
+      filename: doc.filename,
+      speaker: doc.speaker ?? 'unknown',
+      termFreqs: termFreq,
+      docLen,
+      bm25Vec,
+      bm25Norm: Math.sqrt(normSq),
+    })
+    this._implicitLinks = null
   }
 
   search(query: string, topN: number = 8): TfIdfResult[] {
@@ -203,48 +292,43 @@ export class TfIdfIndex {
     const queryTerms = tokenize(query)
     if (queryTerms.length === 0) return []
 
-    // Query vector (TF=1/n for each term, IDF from corpus)
-    const queryVec = new Map<string, number>()
-    let queryNormSq = 0
-    for (const term of queryTerms) {
-      // OOV handling: use IDF=log(2) for words not in corpus
-      const idf = this.idf.get(term) ?? Math.log(2)
-      queryVec.set(term, idf)
-      queryNormSq += idf * idf
-    }
-    const queryNorm = Math.sqrt(queryNormSq)
-    if (queryNorm === 0) return []
+    // Deduplicate query terms
+    const queryTermSet = new Set(queryTerms)
 
-    const scored: { doc: TfIdfDoc; score: number }[] = []
+    const scored: { doc: BM25Doc; score: number }[] = []
+
     for (const doc of this.docs) {
-      if (doc.norm === 0) continue
-      let dot = 0
-      for (const [term, qScore] of queryVec) {
-        const dScore = doc.vector.get(term) ?? 0
-        dot += qScore * dScore
+      const lenNorm = 1 - BM25_B + BM25_B * (doc.docLen / this.avgdl)
+      let score = 0
+
+      for (const term of queryTermSet) {
+        const idfVal = this.idf.get(term) ?? 0
+        if (idfVal <= 0) continue
+        const tf = doc.termFreqs.get(term) ?? 0
+        if (tf === 0) continue
+        score += idfVal * (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * lenNorm)
       }
-      const cosine = dot / (queryNorm * doc.norm)
-      if (cosine > 0.005) scored.push({ doc, score: cosine })
+
+      if (score > 0) scored.push({ doc, score })
     }
 
     scored.sort((a, b) => b.score - a.score)
+
+    // Normalize to 0-1 based on highest score
+    const maxScore = scored[0]?.score ?? 1
     return scored.slice(0, topN).map(s => ({
       docId: s.doc.docId,
       filename: s.doc.filename,
       speaker: s.doc.speaker,
-      score: Math.min(1, s.score),
+      score: Math.min(1, s.score / maxScore),
     }))
   }
 
   /**
    * Returns semantically similar document pairs not connected by WikiLinks.
-   * Pairs with TF-IDF cosine similarity >= threshold are included.
+   * Pairs with BM25 weight vector cosine similarity >= threshold are included.
    *
-   * Returns cached results when adjacency reference hasn't changed (O(N²) computed once).
-   *
-   * @param adjacency  Existing WikiLink adjacency map (used to exclude already-connected pairs)
-   * @param topN       Maximum number of pairs to return
-   * @param threshold  Minimum cosine similarity (default 0.25)
+   * Returns cached results when adjacency reference hasn't changed (O(N^2) computed once).
    */
   findImplicitLinks(
     adjacency: Map<string, string[]>,
@@ -253,39 +337,42 @@ export class TfIdfIndex {
   ): ImplicitLink[] {
     if (!this.built || this.docs.length < 2) return []
 
-    // Cache keyed on adjacency reference
     if (this._implicitLinks && this._implicitAdjRef === adjacency) {
       return this._implicitLinks.slice(0, topN)
     }
 
-    // Build existing WikiLink pairs as a Set — O(1) lookup
-    const existingLinks = new Set<string>()
+    const docs = this.docs
+    const n = docs.length
+
+    const docIdxMap = new Map<string, number>()
+    docs.forEach((d, idx) => docIdxMap.set(d.docId, idx))
+
+    const existingLinks = new Set<number>()
     for (const [from, neighbors] of adjacency) {
+      const fi = docIdxMap.get(from)
+      if (fi === undefined) continue
       for (const to of neighbors) {
-        const key = from < to ? `${from}|${to}` : `${to}|${from}`
-        existingLinks.add(key)
+        const ti = docIdxMap.get(to)
+        if (ti === undefined) continue
+        existingLinks.add(fi < ti ? fi * n + ti : ti * n + fi)
       }
     }
 
-    // Performance cap: O(N²) computation over max 250 documents
-    const docs = this.docs.slice(0, 250)
     const pairs: ImplicitLink[] = []
 
-    for (let i = 0; i < docs.length; i++) {
-      for (let j = i + 1; j < docs.length; j++) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
         const a = docs[i], b = docs[j]
-        if (a.norm === 0 || b.norm === 0) continue
+        if (a.bm25Norm === 0 || b.bm25Norm === 0) continue
+        if (existingLinks.has(i * n + j)) continue
 
-        const key = a.docId < b.docId ? `${a.docId}|${b.docId}` : `${b.docId}|${a.docId}`
-        if (existingLinks.has(key)) continue
-
-        // Cosine similarity: compute only shared terms using a's vector as the base
+        // BM25 weight vector cosine similarity
         let dot = 0
-        for (const [term, aScore] of a.vector) {
-          const bScore = b.vector.get(term) ?? 0
-          dot += aScore * bScore
+        for (const [term, aW] of a.bm25Vec) {
+          const bW = b.bm25Vec.get(term) ?? 0
+          dot += aW * bW
         }
-        const sim = dot / (a.norm * b.norm)
+        const sim = dot / (a.bm25Norm * b.bm25Norm)
         if (sim >= threshold) {
           pairs.push({
             docAId: a.docId,
@@ -301,13 +388,13 @@ export class TfIdfIndex {
     pairs.sort((a, b) => b.similarity - a.similarity)
     this._implicitLinks = pairs
     this._implicitAdjRef = adjacency
-    logger.debug(`[graphAnalysis] Implicit links found: ${pairs.length} pairs (threshold=${threshold})`)
+    logger.debug(`[graphAnalysis] Implicit links found: ${pairs.length} pairs (docs=${n}, threshold=${threshold})`)
 
     return pairs.slice(0, topN)
   }
 }
 
-/** TF-IDF singleton — call build() after vault load */
+/** BM25 index singleton — call build() after vault load */
 export const tfidfIndex = new TfIdfIndex()
 
 // ── B. PageRank ───────────────────────────────────────────────────────────────
@@ -422,6 +509,12 @@ export interface GraphMetrics {
 let _metricsCache: GraphMetrics | null = null
 let _metricsLinksRef: unknown = null
 
+/** Explicitly clear metrics cache when switching vaults. */
+export function clearMetricsCache(): void {
+  _metricsCache = null
+  _metricsLinksRef = null
+}
+
 /**
  * Computes PageRank + clusters once and caches the result.
  * Automatically recomputes when the links array reference changes.
@@ -494,11 +587,23 @@ export function detectBridgeNodes(
  * @param topK      Number of keywords to return per cluster
  * @returns Map<clusterId, topKeywords[]>
  */
+// Cluster topic cache — skip recomputation when clusters Map reference and topK match
+let _cachedClusterTopicsResult: Map<number, string[]> | null = null
+let _cachedClusterTopicsClusters: Map<string, number> | null = null
+let _cachedClusterTopicsTopK = 0
+
 export function getClusterTopics(
   clusters: Map<string, number>,
   docs: LoadedDocument[],
   topK: number = 3
 ): Map<number, string[]> {
+  if (
+    _cachedClusterTopicsResult !== null &&
+    _cachedClusterTopicsClusters === clusters &&
+    _cachedClusterTopicsTopK === topK
+  ) {
+    return _cachedClusterTopicsResult
+  }
   const clusterTexts = new Map<number, string[]>()
 
   for (const doc of docs) {
@@ -530,5 +635,134 @@ export function getClusterTopics(
     result.set(cId, keywords)
   }
 
+  _cachedClusterTopicsResult = result
+  _cachedClusterTopicsClusters = clusters
+  _cachedClusterTopicsTopK = topK
   return result
+}
+
+// ── G. Vault Insight Analysis ───────────────────────────────────────────────
+
+export interface InsightResult {
+  /** Hub documents referenced by many others */
+  bridgeNodes: { docId: string; filename: string; inboundCount: number; outboundCount: number }[]
+  /** Orphan documents with no inbound or outbound links */
+  orphanDocs: { docId: string; filename: string }[]
+  /** Topics referenced by multiple documents but with no actual file (need creation) */
+  gapTopics: { topic: string; referenceCount: number }[]
+  /** Connected component cluster summary */
+  clusters: { size: number; representative: string; clusterIdx: number }[]
+}
+
+/**
+ * Analyzes the entire vault to generate insights.
+ * - Bridge nodes: hub documents with many references
+ * - Orphan docs: documents with no links at all
+ * - Gap topics: [[links]] referenced in multiple places but no corresponding file
+ * - Clusters: connected component summary
+ */
+export function computeInsights(docs: LoadedDocument[]): InsightResult {
+  if (docs.length === 0) return { bridgeNodes: [], orphanDocs: [], gapTopics: [], clusters: [] }
+
+  const docIds = new Set(docs.map(d => d.id))
+  // stem -> docId mapping (filename-based reverse lookup)
+  const stemToId = new Map<string, string>()
+  for (const doc of docs) {
+    const stem = doc.filename.replace(/\.md$/i, '').toLowerCase()
+    stemToId.set(stem, doc.id)
+    stemToId.set(doc.id, doc.id)
+  }
+
+  const outbound = new Map<string, Set<string>>()
+  const inbound  = new Map<string, number>()
+  const phantom  = new Map<string, number>()
+
+  for (const doc of docs) {
+    outbound.set(doc.id, new Set())
+    inbound.set(doc.id, 0)
+  }
+
+  for (const doc of docs) {
+    const links = doc.sections.flatMap(s => s.wikiLinks ?? [])
+    for (const raw of links) {
+      const stem = raw.split('|')[0].trim().toLowerCase()
+      const targetId = stemToId.get(stem)
+      if (targetId && targetId !== doc.id && docIds.has(targetId)) {
+        outbound.get(doc.id)!.add(targetId)
+        inbound.set(targetId, (inbound.get(targetId) ?? 0) + 1)
+      } else if (!targetId) {
+        phantom.set(raw, (phantom.get(raw) ?? 0) + 1)
+      }
+    }
+  }
+
+  // Bridge nodes (high inbound)
+  const bridgeNodes = docs
+    .map(d => ({
+      docId: d.id,
+      filename: d.filename,
+      inboundCount: inbound.get(d.id) ?? 0,
+      outboundCount: outbound.get(d.id)?.size ?? 0,
+    }))
+    .filter(n => n.inboundCount >= 3)
+    .sort((a, b) => b.inboundCount - a.inboundCount)
+    .slice(0, 12)
+
+  // Orphan docs (0 in + 0 out, not _index)
+  const orphanDocs = docs
+    .filter(d =>
+      (inbound.get(d.id) ?? 0) === 0 &&
+      (outbound.get(d.id)?.size ?? 0) === 0 &&
+      !/_index|currentSituation/i.test(d.filename)
+    )
+    .map(d => ({ docId: d.id, filename: d.filename }))
+    .slice(0, 20)
+
+  // Gap topics (phantom links referenced >= 2 times)
+  const gapTopics = [...phantom.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([topic, referenceCount]) => ({ topic, referenceCount }))
+
+  // Clusters: BFS over bidirectional edges
+  const edges = new Map<string, Set<string>>()
+  for (const doc of docs) edges.set(doc.id, new Set())
+  for (const [from, targets] of outbound) {
+    for (const to of targets) {
+      edges.get(from)!.add(to)
+      if (edges.has(to)) edges.get(to)!.add(from)
+    }
+  }
+
+  const visited = new Set<string>()
+  const clusterList: { size: number; representative: string; clusterIdx: number }[] = []
+  let clusterIdx = 0
+
+  for (const doc of docs) {
+    if (visited.has(doc.id)) continue
+    const component: string[] = []
+    const queue = [doc.id]
+    let qi = 0
+    while (qi < queue.length) {
+      const cur = queue[qi++]
+      if (visited.has(cur)) continue
+      visited.add(cur)
+      component.push(cur)
+      for (const nb of (edges.get(cur) ?? [])) {
+        if (!visited.has(nb)) queue.push(nb)
+      }
+    }
+    if (component.length >= 2) {
+      clusterList.push({
+        size: component.length,
+        representative: docs.find(d => d.id === component[0])?.filename ?? component[0],
+        clusterIdx: clusterIdx++,
+      })
+    }
+  }
+
+  clusterList.sort((a, b) => b.size - a.size)
+
+  return { bridgeNodes, orphanDocs, gapTopics, clusters: clusterList.slice(0, 5) }
 }

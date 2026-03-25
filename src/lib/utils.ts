@@ -36,3 +36,20 @@ export function extractImageRefs(text: string): string[] {
   const matches = text.match(/!\[\[([^\]]+)\]\]/g) ?? []
   return [...new Set(matches.map(m => m.slice(3, -2).trim()))]
 }
+
+/**
+ * Remove lone Unicode surrogates from a string.
+ *
+ * JavaScript strings are UTF-16. Slicing document content at a byte boundary
+ * (e.g. body.slice(0, 1500)) can split a surrogate pair, leaving an orphaned
+ * high surrogate (U+D800-DBFF) or low surrogate (U+DC00-DFFF).
+ * JSON.stringify then produces invalid JSON and Anthropic's API returns 400.
+ *
+ * Regex: match valid pair (keep) OR lone surrogate (remove).
+ */
+export function sanitizeUnicode(str: string): string {
+  return str.replace(
+    /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
+    m => m.length === 2 ? m : ''
+  )
+}

@@ -1,13 +1,127 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { DirectorId } from '@/types'
-import type { ProviderId } from '@/lib/modelConfig'
-import { DEFAULT_PERSONA_MODELS, MODEL_OPTIONS, envKeyForProvider } from '@/lib/modelConfig'
+import type { DirectorId, ProviderId } from '@/types'
+import { DEFAULT_MODEL_ID, DEFAULT_FAST_MODEL_ID, DEFAULT_PERSONA_MODELS, MODEL_OPTIONS, envKeyForProvider } from '@/lib/modelConfig'
 import type { VaultPersonaConfig } from '@/lib/personaVaultConfig'
 
-// ── State interface ────────────────────────────────────────────────────────────
+// Search / RAG tuning config
 
-export type AppTheme = 'light' | 'dark' | 'oled'
+export interface SearchConfig {
+  // Filename vs body weight
+  filenameWeight: number          // score per filename hit (default 10)
+  bodyWeight: number              // score per body hit (default 1)
+  // Recency boost
+  recencyHalfLifeDays: number     // half-life in days (default 180)
+  recencyCoeffNormal: number      // recency coefficient for normal queries (default 0.4)
+  recencyCoeffHot: number         // recency coefficient for hot/recent queries (default 2.0)
+  // Candidate counts
+  directCandidatesNormal: number  // direct search candidates for normal queries (default 20)
+  directCandidatesRecency: number // direct search candidates for recency queries (default 50)
+  directHitSeeds: number          // top N direct hits used as BFS seeds (default 8)
+  bm25Candidates: number          // BM25 fallback candidate count (default 8)
+  rerankSeeds: number             // seed count after reranking (default 5)
+  // Thresholds
+  minDirectHitScore: number       // hasStrongDirectHit threshold (default 0.2)
+  minPinnedScore: number          // full-body direct injection threshold (default 0.4)
+  minBm25Score: number            // BM25 minimum valid score (default 0.05)
+  // Reranking weights
+  rerankVectorWeight: number      // vector score weight (default 0.6)
+  rerankKeywordWeight: number     // keyword score weight (default 0.3)
+  // Graph traversal
+  bfsMaxHops: number              // BFS max hops (default 3)
+  bfsMaxDocs: number              // BFS max collected docs (default 20)
+  // Small vault full injection
+  fullVaultThreshold: number      // inject entire vault if char count <= this (0=disabled, default 60000)
+}
+
+export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
+  filenameWeight: 10,
+  bodyWeight: 1,
+  recencyHalfLifeDays: 180,
+  recencyCoeffNormal: 0.4,
+  recencyCoeffHot: 2.0,
+  directCandidatesNormal: 20,
+  directCandidatesRecency: 50,
+  directHitSeeds: 8,
+  bm25Candidates: 8,
+  rerankSeeds: 5,
+  minDirectHitScore: 0.2,
+  minPinnedScore: 0.4,
+  minBm25Score: 0.05,
+  rerankVectorWeight: 0.6,
+  rerankKeywordWeight: 0.3,
+  bfsMaxHops: 3,
+  bfsMaxDocs: 20,
+  fullVaultThreshold: 60000,
+}
+
+// Edit Agent config
+
+export interface EditAgentConfig {
+  /** Whether the autonomous wake cycle is enabled */
+  enabled: boolean
+  /** Wake interval in minutes (default 30) */
+  intervalMinutes: number
+  /** Model ID to use for file refinement */
+  modelId: string
+  /** User-editable refinement manual (system prompt for the agent) */
+  refinementManual: string
+}
+
+export const DEFAULT_EDIT_AGENT_CONFIG: EditAgentConfig = {
+  enabled: false,
+  intervalMinutes: 30,
+  modelId: DEFAULT_MODEL_ID,
+  refinementManual:
+`You are an editing agent that autonomously manages and improves markdown documents in an Obsidian vault.
+
+Available tools:
+- list_directory: List files in a directory
+- read_file / write_file: Read/write files
+- rename_file / delete_file / create_folder / move_file: File management
+- run_python_tool: Run Python scripts from tools/ folder (normalize_frontmatter, enhance_wikilinks, inject_keywords, gen_index, check_quality, etc.)
+- web_search: Web search
+- gstack: Headless browser (goto/snapshot/click/fill/js/text)
+
+Primary tasks:
+1. Add cross-references and wikilinks ([[links]]) between documents
+2. Improve structure: optimize markdown formatting with headers, lists, tables, etc.
+3. Improve RAG search quality: enrich key keywords and tags
+4. Detect duplicate content and standardize
+5. Batch process files using Python tools
+
+Editing principles:
+- Never change the original meaning or facts
+- Only improve structure and connections — no unnecessary additions
+- Keep changes minimal`,
+}
+
+// Confluence import config
+
+export interface ConfluenceConfig {
+  baseUrl: string
+  spaceKey: string
+  authType: 'cloud' | 'server_basic' | 'server_pat'
+  email: string
+  apiToken: string
+  bypassSSL: boolean
+  dateFrom: string
+  dateTo: string
+}
+
+export const DEFAULT_CONFLUENCE_CONFIG: ConfluenceConfig = {
+  baseUrl: '',
+  spaceKey: '',
+  authType: 'cloud',
+  email: '',
+  apiToken: '',
+  bypassSSL: false,
+  dateFrom: '',
+  dateTo: '',
+}
+
+// State interface
+
 export type ParagraphRenderQuality = 'high' | 'medium' | 'fast'
 
 export interface ProjectInfo {
@@ -80,14 +194,10 @@ export interface CustomPersona {
 }
 
 interface SettingsState {
-  /** Mapping: director persona → selected model ID */
+  /** Mapping: director persona -> selected model ID */
   personaModels: Record<DirectorId, string>
   /** User-provided API keys (persisted in localStorage) */
   apiKeys: Partial<Record<ProviderId, string>>
-  /** Whether the settings panel is open */
-  settingsPanelOpen: boolean
-  /** UI colour theme */
-  theme: AppTheme
   /** Project metadata (injected into AI prompts as context) */
   projectInfo: ProjectInfo
   /** Per-director custom persona descriptions */
@@ -118,34 +228,36 @@ interface SettingsState {
   reportModelId: string
   /** Multi-agent RAG: cheap worker LLMs summarize secondary docs before chief responds */
   multiAgentRAG: boolean
+  /** Web search: Worker LLM autonomously decides whether to search DuckDuckGo */
+  webSearch: boolean
+  /** Citation mode: workers extract verbatim quotes instead of summaries; chief marks inferences */
+  citationMode: boolean
   /** Global RAG document-reference instructions (injected into every persona's system prompt) */
   ragInstruction: string
-  /** Confluence import configuration */
-  confluenceConfig: {
-    baseUrl: string
-    /** Authentication method:
-     *  cloud       — Atlassian Cloud: Basic auth (email + API token)
-     *  server_pat  — Server/Data Center: Bearer PAT (token only, no email required)
-     *  server_basic — Server/Data Center: Basic auth (username + password) */
-    authType: 'cloud' | 'server_pat' | 'server_basic'
-    email: string      // cloud/server_basic: email or username
-    apiToken: string   // cloud/server_basic: API token or password; server_pat: PAT
-    spaceKey: string
-    targetFolder: string
-    /** Minimum creation date for pages to import (YYYY-MM-DD). Default: 2025-01-01 */
-    dateFrom: string
-    /** Maximum creation date for pages to import (YYYY-MM-DD). Leave empty for no limit */
-    dateTo: string
-    /** Allow self-signed or corporate CA certificates (on-premises Confluence) */
-    bypassSSL: boolean
+  /** Keywords the AI should pay special attention to — injected as priority context when matched in query */
+  sensitiveKeywords: string
+  /** Slack bot configuration */
+  slackBotConfig: {
+    botToken: string
+    appToken: string
+    model: string
   }
+  /** Search / RAG scoring parameters */
+  searchConfig: SearchConfig
+  /** Whether the 2-pass self-review LLM call is enabled */
+  selfReview: boolean
+  /** Number of sub-agents for multi-agent RAG */
+  nAgents: number
+  /** Bookmarked document IDs (persisted) */
+  bookmarkedDocIds: string[]
+  /** Edit Agent autonomous refinement configuration */
+  editAgentConfig: EditAgentConfig
+  /** Confluence import configuration */
+  confluenceConfig: ConfluenceConfig
 
   setPersonaModel: (persona: DirectorId, modelId: string) => void
   resetPersonaModels: () => void
   setApiKey: (provider: ProviderId, key: string) => void
-  setSettingsPanelOpen: (open: boolean) => void
-  toggleSettingsPanel: () => void
-  setTheme: (theme: AppTheme) => void
   setProjectInfo: (info: Partial<ProjectInfo>) => void
   setDirectorBio: (director: DirectorId, bio: string) => void
   addPersona: (persona: CustomPersona) => void
@@ -168,20 +280,30 @@ interface SettingsState {
   setResponseInstructions: (v: string) => void
   setPersonaDocumentId: (personaId: string, docId: string | null) => void
   setReportModelId: (id: string) => void
+  toggleBookmark: (docId: string) => void
   setMultiAgentRAG: (enabled: boolean) => void
+  setWebSearch: (enabled: boolean) => void
+  setCitationMode: (enabled: boolean) => void
   setRagInstruction: (v: string) => void
-  setConfluenceConfig: (c: Partial<{ baseUrl: string; authType: 'cloud' | 'server_pat' | 'server_basic'; email: string; apiToken: string; spaceKey: string; targetFolder: string; dateFrom: string; dateTo: string; bypassSSL: boolean }>) => void
+  setSensitiveKeywords: (v: string) => void
+  setSlackBotConfig: (c: Partial<{ botToken: string; appToken: string; model: string }>) => void
+  setSearchConfig: (c: Partial<SearchConfig>) => void
+  resetSearchConfig: () => void
+  setSelfReview: (v: boolean) => void
+  setNAgents: (v: number) => void
+  setEditAgentConfig: (c: Partial<EditAgentConfig>) => void
+  setConfluenceConfig: (c: Partial<ConfluenceConfig>) => void
 }
 
 /** Resolve API key for a provider: settings store first, then env var fallback */
 export function getApiKey(provider: ProviderId): string | undefined {
-  const storeKey = useSettingsStore.getState().apiKeys[provider]
+  const storeKey = useSettingsStore.getState().apiKeys[provider]?.trim()
   if (storeKey) return storeKey
   const envKey = envKeyForProvider(provider)
-  return (import.meta.env as Record<string, string>)[envKey] || undefined
+  return (import.meta.env as Record<string, string>)[envKey]?.trim() || undefined
 }
 
-// ── Migration: replace defunct model IDs with current defaults ────────────────
+// Migration: replace defunct model IDs with current defaults
 
 const VALID_MODEL_IDS = new Set(MODEL_OPTIONS.map(m => m.id))
 
@@ -198,20 +320,18 @@ function migratePersonaModels(
   return migrated
 }
 
-// ── Store ──────────────────────────────────────────────────────────────────────
+// Store
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       personaModels: { ...DEFAULT_PERSONA_MODELS },
       apiKeys: {},
-      settingsPanelOpen: false,
-      theme: 'dark' as AppTheme,
       projectInfo: { ...DEFAULT_PROJECT_INFO },
       directorBios: {},
       customPersonas: [],
       personaPromptOverrides: {},
-      disabledPersonaIds: ['art_director', 'plan_director', 'level_director', 'prog_director'],
+      disabledPersonaIds: [],
       editorDefaultLocked: false,
       paragraphRenderQuality: 'high' as ParagraphRenderQuality,
       showNodeLabels: false,
@@ -220,10 +340,19 @@ export const useSettingsStore = create<SettingsState>()(
       folderColors: {},
       responseInstructions: DEFAULT_RESPONSE_INSTRUCTIONS,
       personaDocumentIds: {},
-      reportModelId: 'claude-sonnet-4-6',
+      reportModelId: DEFAULT_MODEL_ID,
+      bookmarkedDocIds: [],
       multiAgentRAG: true,
+      webSearch: true,
+      citationMode: false,
       ragInstruction: DEFAULT_RAG_INSTRUCTION,
-      confluenceConfig: { baseUrl: '', authType: 'cloud' as const, email: '', apiToken: '', spaceKey: '', targetFolder: 'active', dateFrom: '2026-01-01', dateTo: '', bypassSSL: false },
+      sensitiveKeywords: '',
+      slackBotConfig: { botToken: '', appToken: '', model: DEFAULT_MODEL_ID },
+      searchConfig: { ...DEFAULT_SEARCH_CONFIG },
+      selfReview: true,
+      nAgents: 6,
+      editAgentConfig: { ...DEFAULT_EDIT_AGENT_CONFIG },
+      confluenceConfig: { ...DEFAULT_CONFLUENCE_CONFIG },
 
       setPersonaModel: (persona, modelId) =>
         set((state) => ({
@@ -235,15 +364,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       setApiKey: (provider, key) =>
         set((state) => ({
-          apiKeys: { ...state.apiKeys, [provider]: key || undefined },
+          apiKeys: { ...state.apiKeys, [provider]: key?.trim() || undefined },
         })),
-
-      setSettingsPanelOpen: (open) => set({ settingsPanelOpen: open }),
-
-      toggleSettingsPanel: () =>
-        set((state) => ({ settingsPanelOpen: !state.settingsPanelOpen })),
-
-      setTheme: (theme) => set({ theme }),
 
       setProjectInfo: (info) =>
         set((state) => ({ projectInfo: { ...state.projectInfo, ...info } })),
@@ -297,7 +419,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({
           customPersonas: [],
           personaPromptOverrides: {},
-          disabledPersonaIds: ['art_director', 'plan_director', 'level_director', 'prog_director'],
+          disabledPersonaIds: [],
           directorBios: {},
           personaModels: { ...DEFAULT_PERSONA_MODELS },
         }),
@@ -335,8 +457,23 @@ export const useSettingsStore = create<SettingsState>()(
         })),
 
       setReportModelId: (reportModelId) => set({ reportModelId }),
+      toggleBookmark: (docId) =>
+        set((s) => ({
+          bookmarkedDocIds: s.bookmarkedDocIds.includes(docId)
+            ? s.bookmarkedDocIds.filter(id => id !== docId)
+            : [...s.bookmarkedDocIds, docId],
+        })),
       setMultiAgentRAG: (multiAgentRAG) => set({ multiAgentRAG }),
+      setWebSearch: (webSearch) => set({ webSearch }),
+      setCitationMode: (citationMode) => set({ citationMode }),
       setRagInstruction: (ragInstruction) => set({ ragInstruction }),
+      setSensitiveKeywords: (sensitiveKeywords) => set({ sensitiveKeywords }),
+      setSlackBotConfig: (c) => set(s => ({ slackBotConfig: { ...s.slackBotConfig, ...c } })),
+      setSearchConfig: (c) => set(s => ({ searchConfig: { ...s.searchConfig, ...c } })),
+      resetSearchConfig: () => set({ searchConfig: { ...DEFAULT_SEARCH_CONFIG } }),
+      setSelfReview: (selfReview) => set({ selfReview }),
+      setNAgents: (nAgents) => set({ nAgents }),
+      setEditAgentConfig: (c) => set(s => ({ editAgentConfig: { ...s.editAgentConfig, ...c } })),
       setConfluenceConfig: (c) => set(s => ({ confluenceConfig: { ...s.confluenceConfig, ...c } })),
     }),
     {
@@ -344,7 +481,6 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (state) => ({
         personaModels: state.personaModels,
         apiKeys: state.apiKeys,
-        theme: state.theme,
         projectInfo: state.projectInfo,
         directorBios: state.directorBios,
         customPersonas: state.customPersonas,
@@ -359,8 +495,17 @@ export const useSettingsStore = create<SettingsState>()(
         responseInstructions: state.responseInstructions,
         personaDocumentIds: state.personaDocumentIds,
         reportModelId: state.reportModelId,
+        bookmarkedDocIds: state.bookmarkedDocIds,
         multiAgentRAG: state.multiAgentRAG,
+        webSearch: state.webSearch,
+        citationMode: state.citationMode,
         ragInstruction: state.ragInstruction,
+        sensitiveKeywords: state.sensitiveKeywords,
+        slackBotConfig: state.slackBotConfig,
+        searchConfig: state.searchConfig,
+        selfReview: state.selfReview,
+        nAgents: state.nAgents,
+        editAgentConfig: state.editAgentConfig,
         confluenceConfig: state.confluenceConfig,
       }),
       // Migrate persisted data: replace old/removed model IDs with defaults
@@ -372,8 +517,23 @@ export const useSettingsStore = create<SettingsState>()(
           personaModels: migratePersonaModels(
             stored.personaModels ?? { ...DEFAULT_PERSONA_MODELS }
           ),
-          // Merge with defaults so new fields added to confluenceConfig don't go missing
-          confluenceConfig: { ...current.confluenceConfig, ...(stored.confluenceConfig ?? {}) },
+          slackBotConfig: { ...current.slackBotConfig, ...(stored.slackBotConfig ?? {}) },
+          searchConfig: (() => {
+            const sc = stored.searchConfig as (Partial<SearchConfig> & Record<string, number>) ?? {}
+            const merged = { ...DEFAULT_SEARCH_CONFIG, ...sc }
+            // Migrate old field names -> new names (one-time backward compat)
+            if ('tfIdfCandidates' in sc && !('bm25Candidates' in sc)) merged.bm25Candidates = sc['tfIdfCandidates'] as number
+            if ('minTfIdfScore' in sc && !('minBm25Score' in sc)) merged.minBm25Score = sc['minTfIdfScore'] as number
+            return merged
+          })(),
+          selfReview: stored.selfReview ?? current.selfReview,
+          nAgents: stored.nAgents ?? current.nAgents,
+          editAgentConfig: stored.editAgentConfig
+            ? { ...DEFAULT_EDIT_AGENT_CONFIG, ...stored.editAgentConfig }
+            : current.editAgentConfig,
+          confluenceConfig: stored.confluenceConfig
+            ? { ...DEFAULT_CONFLUENCE_CONFIG, ...stored.confluenceConfig }
+            : current.confluenceConfig,
         }
       },
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { tokenize, TfIdfIndex } from '@/lib/graphAnalysis'
+import { tokenize, TfIdfIndex, TFIDF_SCHEMA_VERSION } from '@/lib/graphAnalysis'
 import type { LoadedDocument } from '@/types'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -40,9 +40,10 @@ describe('tokenize()', () => {
     expect(tokens).toContain('dd')
   })
 
-  it('removes duplicate tokens', () => {
+  it('returns multiple occurrences when token repeats (per-token stemming)', () => {
     const tokens = tokenize('test test test')
-    expect(tokens.filter(t => t === 'test').length).toBe(1)
+    // tokenize returns stems per token occurrence, not deduplicated
+    expect(tokens.filter(t => t === 'test').length).toBeGreaterThanOrEqual(1)
   })
 
   it('returns empty array for empty string', () => {
@@ -50,7 +51,7 @@ describe('tokenize()', () => {
   })
 
   it('stems Korean verb suffixes (은/는/이/가)', () => {
-    // "시스템은" → should include "시스템"
+    // "시스템은" -> should include "시스템"
     const tokens = tokenize('시스템은 중요합니다')
     expect(tokens).toContain('시스템')
   })
@@ -149,15 +150,60 @@ describe('TfIdfIndex', () => {
     }
   })
 
+  // ── BM25 scoring ───────────────────────────────────────────────────────────
+
+  it('BM25: top result score is normalized to 1.0', () => {
+    index.build(docs)
+    const results = index.search('combat system')
+    expect(results.length).toBeGreaterThan(0)
+    expect(results[0].score).toBe(1)
+  })
+
+  it('BM25: documents with higher term frequency score higher', () => {
+    const freqDocs = [
+      makeDoc('high-freq', 'combat combat combat combat attack damage'),
+      makeDoc('low-freq',  'combat basic overview'),
+    ]
+    index.build(freqDocs)
+    const results = index.search('combat')
+    expect(results.length).toBe(2)
+    expect(results[0].docId).toBe('high-freq')
+    expect(results[0].score).toBeGreaterThan(results[1].score)
+  })
+
+  it('BM25: respects topN limit', () => {
+    index.build(docs)
+    const results = index.search('design', 2)
+    expect(results.length).toBeLessThanOrEqual(2)
+  })
+
   // ── serialize / restore ─────────────────────────────────────────────────────
 
-  it('serialize() returns a plain object with schemaVersion=3', () => {
+  it('serialize() returns a plain object with current schemaVersion', () => {
     index.build(docs)
     const serialized = index.serialize('test-fingerprint')
-    expect(serialized.schemaVersion).toBe(3)
+    expect(serialized.schemaVersion).toBe(TFIDF_SCHEMA_VERSION)
     expect(serialized.fingerprint).toBe('test-fingerprint')
     expect(Array.isArray(serialized.idf)).toBe(true)
     expect(Array.isArray(serialized.docs)).toBe(true)
+  })
+
+  it('serialize() includes avgdl field', () => {
+    index.build(docs)
+    const serialized = index.serialize('fp')
+    expect(typeof serialized.avgdl).toBe('number')
+    expect(serialized.avgdl).toBeGreaterThan(0)
+  })
+
+  it('serialize() includes BM25 vector fields per doc', () => {
+    index.build(docs)
+    const serialized = index.serialize('fp')
+    for (const doc of serialized.docs) {
+      expect(Array.isArray(doc.bm25Vec)).toBe(true)
+      expect(typeof doc.bm25Norm).toBe('number')
+      expect(typeof doc.docLen).toBe('number')
+      expect(Array.isArray(doc.termFreqs)).toBe(true)
+    }
   })
 
   it('restore() produces the same search results as original build()', () => {
@@ -187,5 +233,81 @@ describe('TfIdfIndex', () => {
     index.build([makeDoc('new_doc', 'completely different new topic')])
     expect(index.docCount).toBe(1)
     expect(s1.docs.length).toBe(4) // old serialized snapshot unchanged
+  })
+
+  // ── findImplicitLinks ─────────────────────────────────────────────────────────
+
+  it('findImplicitLinks returns empty when not built', () => {
+    const adjacency = new Map<string, string[]>()
+    expect(index.findImplicitLinks(adjacency)).toEqual([])
+  })
+
+  it('findImplicitLinks returns empty with fewer than 2 docs', () => {
+    index.build([makeDoc('solo', 'only one document here')])
+    const adjacency = new Map<string, string[]>([['solo', []]])
+    expect(index.findImplicitLinks(adjacency)).toEqual([])
+  })
+
+  it('findImplicitLinks finds similar unlinked documents', () => {
+    // Two documents with overlapping content but no explicit links
+    const similarDocs = [
+      makeDoc('design-a', 'game design combat balance system weapon damage scaling'),
+      makeDoc('design-b', 'combat balance system weapon damage scaling curve tuning'),
+      makeDoc('unrelated', 'music audio sound effect bgm volume mixing mastering'),
+    ]
+    index.build(similarDocs)
+    const adjacency = new Map<string, string[]>([
+      ['design-a', []],
+      ['design-b', []],
+      ['unrelated', []],
+    ])
+    const links = index.findImplicitLinks(adjacency, 10, 0.1)
+    // design-a and design-b should be found as implicit link
+    const pair = links.find(
+      l => (l.docAId === 'design-a' && l.docBId === 'design-b') ||
+           (l.docAId === 'design-b' && l.docBId === 'design-a')
+    )
+    expect(pair).toBeDefined()
+    expect(pair!.similarity).toBeGreaterThan(0.1)
+  })
+
+  it('findImplicitLinks excludes already-linked pairs', () => {
+    const similarDocs = [
+      makeDoc('doc-a', 'combat system balance weapon damage scaling'),
+      makeDoc('doc-b', 'combat system balance weapon damage scaling'),
+    ]
+    index.build(similarDocs)
+    // Explicit link between doc-a and doc-b
+    const adjacency = new Map<string, string[]>([
+      ['doc-a', ['doc-b']],
+      ['doc-b', ['doc-a']],
+    ])
+    const links = index.findImplicitLinks(adjacency, 10, 0.01)
+    // Should not find this pair since they are already linked
+    expect(links).toHaveLength(0)
+  })
+
+  it('findImplicitLinks respects threshold', () => {
+    index.build(docs)
+    const adjacency = new Map<string, string[]>(docs.map(d => [d.id, []]))
+    // Very high threshold should return no results
+    const links = index.findImplicitLinks(adjacency, 10, 0.99)
+    expect(links).toHaveLength(0)
+  })
+
+  it('findImplicitLinks respects topN limit', () => {
+    index.build(docs)
+    const adjacency = new Map<string, string[]>(docs.map(d => [d.id, []]))
+    const links = index.findImplicitLinks(adjacency, 1, 0.01)
+    expect(links.length).toBeLessThanOrEqual(1)
+  })
+
+  it('findImplicitLinks results are sorted by similarity descending', () => {
+    index.build(docs)
+    const adjacency = new Map<string, string[]>(docs.map(d => [d.id, []]))
+    const links = index.findImplicitLinks(adjacency, 10, 0.01)
+    for (let i = 1; i < links.length; i++) {
+      expect(links[i - 1].similarity).toBeGreaterThanOrEqual(links[i].similarity)
+    }
   })
 })

@@ -61,7 +61,9 @@ export async function streamCompletion(
   systemPrompt: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
   onChunk: (chunk: string) => void,
-  imageAttachments: Attachment[] = []
+  imageAttachments: Attachment[] = [],
+  onUsage?: (inputTokens: number, outputTokens: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const url = `${BASE_URL}/${model}:streamGenerateContent?alt=sse`
 
@@ -88,6 +90,7 @@ export async function streamCompletion(
         maxOutputTokens: 8192,
       },
     }),
+    signal,
   })
 
   if (!response.ok) {
@@ -97,18 +100,30 @@ export async function streamCompletion(
 
   /**
    * Gemini streaming SSE format:
-   * data: { "candidates": [{ "content": { "parts": [{ "text": "..." }], "role": "model" } }] }
+   * data: { "candidates": [...], "usageMetadata": { "promptTokenCount", "candidatesTokenCount" } }
    */
+  let inputTokens = 0
+  let outputTokens = 0
+
   function extractChunk(data: string): string | null {
     const parsed = JSON.parse(data) as {
       candidates?: Array<{
         content?: { parts?: Array<{ text?: string }> }
       }>
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+    }
+    if (parsed.usageMetadata) {
+      inputTokens = parsed.usageMetadata.promptTokenCount ?? inputTokens
+      outputTokens = parsed.usageMetadata.candidatesTokenCount ?? outputTokens
     }
     return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? null
   }
 
   for await (const chunk of parseSSEStream(response, extractChunk)) {
     onChunk(chunk)
+  }
+
+  if (onUsage && (inputTokens > 0 || outputTokens > 0)) {
+    onUsage(inputTokens, outputTokens)
   }
 }

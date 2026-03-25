@@ -10,12 +10,17 @@
  * a corresponding .md file still appear as nodes in the graph.
  */
 
-import type { GraphNode, GraphLink, MockDocument, LoadedDocument, SpeakerId } from '@/types'
+import type { GraphNode, GraphLink, LoadedDocument, SpeakerId } from '@/types'
 import { DEFAULT_LINK_STRENGTH } from '@/lib/constants'
 import { slugify, truncate } from '@/lib/utils'
+import { SPEAKER_CONFIG } from '@/lib/speakerConfig'
 
-// Internal union type — both shapes are structurally compatible
-type AnyDocument = MockDocument | LoadedDocument
+const VALID_SPEAKER_IDS = new Set<string>(Object.keys(SPEAKER_CONFIG))
+function toSpeakerId(raw: string | undefined): SpeakerId {
+  return (raw && VALID_SPEAKER_IDS.has(raw)) ? raw as SpeakerId : 'unknown'
+}
+
+type AnyDocument = LoadedDocument
 
 // ── buildGraphNodes ───────────────────────────────────────────────────────────
 
@@ -27,7 +32,7 @@ export function buildGraphNodes(documents: AnyDocument[]): GraphNode[] {
   return documents.map((doc) => ({
     id: doc.id,
     docId: doc.id,
-    speaker: doc.speaker as SpeakerId,
+    speaker: toSpeakerId(doc.speaker),
     label: truncate(doc.filename.replace(/\.md$/i, ''), 36),
     folderPath: (doc as LoadedDocument).folderPath,
     tags: doc.tags?.length ? doc.tags : undefined,
@@ -68,8 +73,8 @@ export function buildGraphLinks(
     filenameToDocId.set(filename.toLowerCase(), doc.id)
   }
 
-  const links: GraphLink[] = []
-  const seen = new Set<string>()
+  // linkCounts: reference counts per normalized bidirectional pair
+  const linkCounts = new Map<string, number>()
   const phantomNodes = new Map<string, GraphNode>() // id → node
 
   for (const doc of documents) {
@@ -122,12 +127,20 @@ export function buildGraphLinks(
         if (targetDocId === doc.id) continue
 
         const key = [doc.id, targetDocId].sort().join('→')
-        if (seen.has(key)) continue
-        seen.add(key)
-        links.push({ source: doc.id, target: targetDocId, strength: DEFAULT_LINK_STRENGTH })
+        linkCounts.set(key, (linkCounts.get(key) ?? 0) + 1)
       }
     }
   }
+
+  // Normalize strength by max reference count: [0.15, 1.0] range
+  const maxCount = Math.max(1, ...linkCounts.values())
+  const links: GraphLink[] = []
+  for (const [key, count] of linkCounts) {
+    const [srcId, tgtId] = key.split('→')
+    const strength = 0.15 + (count / maxCount) * 0.85
+    links.push({ source: srcId, target: tgtId, strength })
+  }
+
   return { links, phantomNodes: Array.from(phantomNodes.values()) }
 }
 
@@ -155,7 +168,7 @@ function buildImageNodes(
     const firstName = (refs[0].split(/[/\\]/).pop() ?? refs[0]).replace(/\.[^.]+$/, '')
     const label = count === 1
       ? truncate(firstName, 36)
-      : truncate(`${firstName} +${count - 1} more`, 36)
+      : truncate(`${firstName} +${count - 1}`, 36)
 
     imageNodes.push({
       id: galleryId,

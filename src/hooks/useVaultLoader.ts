@@ -4,6 +4,9 @@
  * Extracted so it can be used by both:
  *   - App.tsx (auto-load on startup when vaultPath is persisted)
  *   - VaultSelector.tsx (manual load/reload from settings UI)
+ *
+ * Supports multi-vault: loadVaultCached restores from in-memory cache,
+ * loadVaultBackground pre-loads a vault into the docs cache silently.
  */
 
 import { useCallback } from 'react'
@@ -15,14 +18,17 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { parseVaultFilesAsync } from '@/lib/markdownParser'
 import { buildGraph } from '@/lib/graphBuilder'
 import { parsePersonaConfig } from '@/lib/personaVaultConfig'
-import { tfidfIndex } from '@/lib/graphAnalysis'
+import { tfidfIndex, clearMetricsCache } from '@/lib/graphAnalysis'
 import { buildAdjacencyMap } from '@/lib/graphRAG'
+import { buildAndFindLinks, findLinksFromCache } from '@/lib/bm25WorkerClient'
 import { buildFingerprint, loadTfIdfCache, saveTfIdfCache } from '@/lib/tfidfCache'
+import { buildDocsFingerprint, loadDocsCache, saveDocsCache } from '@/lib/docsCache'
+import type { VaultFile } from '@/types'
 
 export function useVaultLoader() {
-  const { vaultPath, setLoadedDocuments, setVaultFolders, setImagePathRegistry, addImageDataCache, clearImageDataCache, setIsLoading, setVaultReady, setLoadingProgress, setError, setPendingFileCount } =
+  const { vaultPath, setLoadedDocuments, setVaultFolders, setImagePathRegistry, clearImageDataCache, setIsLoading, setVaultReady, setLoadingProgress, setError, setPendingFileCount, cacheVaultDocs, setBgLoadingInfo } =
     useVaultStore()
-  const { setNodes, setLinks, resetToMock } = useGraphStore()
+  const { setGraph, resetToMock, setGraphLayoutReady } = useGraphStore()
   const { loadVaultPersonas, resetVaultPersonas } = useSettingsStore()
 
   const loadVault = useCallback(
@@ -36,29 +42,73 @@ export function useVaultLoader() {
       setLoadingProgress(0, 'Initializing vault...')
       setError(null)
       try {
-        const { files, folders, imageRegistry } = await window.vaultAPI.loadFiles(dirPath)
-        logger.debug(`[vault] ${files?.length ?? 0} files, ${folders?.length ?? 0} folders, ${Object.keys(imageRegistry ?? {}).length} images loaded (${dirPath})`)
-        setVaultFolders(folders ?? [])
-        setImagePathRegistry(imageRegistry ?? null)
-        setPendingFileCount(files?.length ?? 0)
-        setLoadingProgress(5, 'File list loaded')
+        // ── Step 1: scanMetadata (mtime only, no file content) → check cache fingerprint ──
+        let docs = null
+        let folders: string[] = []
+        let imageRegistry: Record<string, { relativePath: string; absolutePath: string }> | null = null
 
-        if (!files || files.length === 0) {
-          setLoadedDocuments(null)
-          resetToMock()
-          setIsLoading(false)
-          return
+        if (window.vaultAPI.scanMetadata) {
+          try {
+            setLoadingProgress(2, 'Scanning metadata...')
+            const meta = await window.vaultAPI.scanMetadata(dirPath)
+            if (meta && meta.length > 0) {
+              const docsFingerprint = buildDocsFingerprint(
+                meta.map(m => ({ relativePath: m.relativePath, mtime: m.mtime }))
+              )
+              const hit = await loadDocsCache(dirPath, docsFingerprint)
+              if (hit) {
+                logger.debug(`[vault] Cache hit — skipping loadFiles and parsing (${hit.docs.length} docs)`)
+                setLoadingProgress(90, 'Restoring from cache...')
+                docs = hit.docs
+                folders = hit.folders
+                imageRegistry = hit.imageRegistry
+                setPendingFileCount(hit.docs.length)
+                setVaultFolders(folders)
+                setImagePathRegistry(imageRegistry)
+              }
+            }
+          } catch { /* scanMetadata failed → fall back to loadFiles */ }
         }
 
-        const total = files.length
-        const docs = await parseVaultFilesAsync(files, (parsed) => {
-          const pct = 5 + Math.round((parsed / total) * 80)
-          setLoadingProgress(pct, `Parsing documents... (${parsed}/${total})`)
-        })
-        logger.debug(`[vault] ${docs.length}/${files.length} documents parsed successfully`)
+        // ── Step 2: Cache miss → loadFiles (with file content) ─────────────────
+        let files: VaultFile[] | null = null
+        if (!docs) {
+          const loaded = await window.vaultAPI.loadFiles(dirPath)
+          files = loaded.files
+          folders = loaded.folders ?? []
+          imageRegistry = loaded.imageRegistry ?? null
+          logger.debug(`[vault] ${files?.length ?? 0} files, ${folders.length} folders, ${Object.keys(imageRegistry ?? {}).length} images loaded (${dirPath})`)
+          setVaultFolders(folders)
+          setImagePathRegistry(imageRegistry)
+          setPendingFileCount(files?.length ?? 0)
+          setLoadingProgress(5, 'File list loaded')
+
+          if (!files || files.length === 0) {
+            setLoadedDocuments(null)
+            resetToMock()
+            setIsLoading(false)
+            return
+          }
+        }
+
+        // ── Step 3: Cache miss → full parsing ──────────────────────────────────
+        if (!docs) {
+          const total = files!.length
+          docs = await parseVaultFilesAsync(files!, (parsed) => {
+            const pct = 5 + Math.round((parsed / total) * 80)
+            setLoadingProgress(pct, `Parsing documents... (${parsed}/${total})`)
+          })
+          logger.debug(`[vault] ${docs.length}/${files!.length} documents parsed successfully`)
+
+          // Save to docs cache after parsing (background, includes folders + imageRegistry)
+          const metaForCache = files!.map(f => ({ relativePath: f.relativePath, mtime: f.mtime ?? 0 }))
+          const fp = buildDocsFingerprint(metaForCache)
+          saveDocsCache(dirPath, fp, docs, folders, imageRegistry)
+            .catch((e: unknown) => logger.warn('[docsCache] Save failed:', e))
+        }
         setLoadedDocuments(docs)
 
-        // Load vault-scoped persona config (.rembrant/personas.md)
+        // Load vault-scoped persona config (.strata-sync/personas.md)
         try {
           const configPath = `${dirPath}/${PERSONA_CONFIG_PATH}`
           const configContent = await window.vaultAPI!.readFile(configPath)
@@ -77,75 +127,57 @@ export function useVaultLoader() {
           resetVaultPersonas()
         }
 
-        // Update graph
-        setLoadingProgress(90, 'Building graph...')
-        const { nodes, links } = buildGraph(docs)
-        logger.debug(`[vault] Graph: ${nodes.length} nodes, ${links.length} links`)
-        setNodes(nodes)
-        setLinks(links)
-        setLoadingProgress(95, 'Loading settings...')
+        // Update graph (clear stale metrics cache from previous vault)
+        clearMetricsCache()
+        setLoadingProgress(95, 'Finalizing...')
 
-        // TF-IDF index: restore from cache on hit, build and save on miss
-        // setTimeout(0) to prevent UI blocking
+        // Graph build + BM25 index: use setTimeout(0) to avoid UI blocking
+        // BM25 build/findImplicitLinks runs in a Web Worker (removes O(N^2) main-thread blocking)
         const fingerprint = buildFingerprint(docs)
         setTimeout(async () => {
-          const cached = await loadTfIdfCache(dirPath, fingerprint)
-          if (cached) {
-            tfidfIndex.restore(cached)
-          } else {
-            tfidfIndex.build(docs)
-            void saveTfIdfCache(dirPath, tfidfIndex.serialize(fingerprint))
+          // Graph build (synchronous operation)
+          try {
+            const { nodes, links } = buildGraph(docs)
+            logger.debug(`[vault] Graph: ${nodes.length} nodes, ${links.length} links`)
+            setGraph(nodes, links)
+          } catch (e: unknown) {
+            logger.warn('[vault] Graph build failed:', e instanceof Error ? e.message : String(e))
           }
-          // Pre-compute implicit links — adjacency-based cache warming
+
+          // BM25 index: cache hit → restore (fast) + compute implicit links in worker
+          //             cache miss → build in worker + compute implicit links (non-blocking main thread)
           const { links: currentLinks } = useGraphStore.getState()
-          if (currentLinks.length > 0) {
-            const adj = buildAdjacencyMap(currentLinks)
-            tfidfIndex.findImplicitLinks(adj)
+          const adj = buildAdjacencyMap(currentLinks)
+          try {
+            const cached = await loadTfIdfCache(dirPath, fingerprint)
+            if (cached) {
+              tfidfIndex.restore(cached)
+              if (currentLinks.length > 0) {
+                findLinksFromCache(cached, adj)
+                  .then(links => tfidfIndex.setImplicitLinks(links, adj))
+                  .catch((e: unknown) => logger.warn('[BM25] Implicit link computation failed:', e instanceof Error ? e.message : String(e)))
+              }
+            } else {
+              try {
+                const { serialized, implicitLinks } = await buildAndFindLinks(docs, adj, fingerprint)
+                tfidfIndex.restore(serialized)
+                tfidfIndex.setImplicitLinks(implicitLinks, adj)
+                saveTfIdfCache(dirPath, serialized)
+                  .catch((e: unknown) => logger.warn('[BM25] Cache save failed:', e instanceof Error ? e.message : String(e)))
+              } catch (e: unknown) {
+                logger.warn('[BM25] Worker build failed, falling back to main thread:', e instanceof Error ? e.message : String(e))
+                try { tfidfIndex.build(docs) } catch { /* rebuild also failed — silent */ }
+              }
+            }
+          } catch (e: unknown) {
+            logger.warn('[BM25] Index initialization failed, retrying build:', e instanceof Error ? e.message : String(e))
+            try { tfidfIndex.build(docs) } catch { /* rebuild also failed — silent */ }
           }
         }, 0)
 
-        // Pre-index images — runs in background after loading completes (no UI blocking)
-        if (window.vaultAPI) {
-          void (async () => {
-            const registry = useVaultStore.getState().imagePathRegistry
-            if (!registry) return
-            // Collect imageRefs from all documents (deduplicated)
-            // Obsidian embeds may use path-prefixed refs like ![[attachments/img.png]].
-            // imagePathRegistry is keyed by basename only, so resolve via basename fallback.
-            const resolveEntry = (ref: string) => {
-              if (registry[ref]) return { key: ref, entry: registry[ref] }
-              const basename = ref.split(/[/\\]/).pop() ?? ref
-              if (registry[basename]) return { key: basename, entry: registry[basename] }
-              return null
-            }
-            const refsToPreload = [...new Set(
-              docs.flatMap(d => d.imageRefs ?? []).filter(ref => !!resolveEntry(ref))
-            )]
-            if (refsToPreload.length === 0) return
-            clearImageDataCache()
-            logger.debug(`[vault] Image pre-indexing started: ${refsToPreload.length} images`)
-            // Process in parallel batches of 10
-            const BATCH = 10
-            for (let i = 0; i < refsToPreload.length; i += BATCH) {
-              const batch = refsToPreload.slice(i, i + BATCH)
-              const results = await Promise.allSettled(
-                batch.map(async (ref) => {
-                  const resolved = resolveEntry(ref)!
-                  const dataUrl = await window.vaultAPI!.readImage(resolved.entry.absolutePath)
-                  return { ref: resolved.key, dataUrl }  // cache by basename key
-                })
-              )
-              const batchEntries: Record<string, string> = {}
-              for (const r of results) {
-                if (r.status === 'fulfilled' && r.value.dataUrl) {
-                  batchEntries[r.value.ref] = r.value.dataUrl
-                }
-              }
-              if (Object.keys(batchEntries).length > 0) addImageDataCache(batchEntries)
-            }
-            logger.debug('[vault] Image pre-indexing complete')
-          })()
-        }
+        // Images are loaded on-demand (ChatInput.tsx readImage IPC fallback)
+        // No full pre-indexing at vault load to save memory
+        clearImageDataCache()
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'File load failed'
         logger.error('[vault] Load failed:', msg)
@@ -159,11 +191,161 @@ export function useVaultLoader() {
         setPendingFileCount(null)
       }
     },
-    [setLoadedDocuments, setVaultFolders, setImagePathRegistry, addImageDataCache, clearImageDataCache,
+    [setLoadedDocuments, setVaultFolders, setImagePathRegistry, clearImageDataCache,
      setIsLoading, setVaultReady, setLoadingProgress, setError, setPendingFileCount,
-     setNodes, setLinks, resetToMock,
+     setGraph, resetToMock,
      loadVaultPersonas, resetVaultPersonas]
   )
 
-  return { vaultPath, loadVault }
+  const loadVaultCached = useCallback(
+    async (dirPath: string) => {
+      const { activeVaultId: startVaultId, vaultDocsCache, vaultMetaCache } = useVaultStore.getState()
+      const cachedDocs = startVaultId ? vaultDocsCache[startVaultId] : null
+      const cachedMeta = startVaultId ? vaultMetaCache[startVaultId] : null
+
+      if (!cachedDocs?.length) {
+        // Cache miss → full load
+        return loadVault(dirPath)
+      }
+
+      if (!window.vaultAPI) return
+      // Pre-update currentVaultPath — needed for usePersonaVaultSaver's vault:save-file security check
+      try { await window.vaultAPI.setActivePath?.(dirPath) } catch { /* failure is OK, cache restore continues */ }
+      // Cache restore is fast, so skip isLoading/vaultReady reset → no loading overlay shown
+      setError(null)
+      // Don't set pendingFileCount during cache restore → prevents quality selection screen from reappearing
+      try {
+        // Restore image registry + folders from cache (or empty defaults)
+        setImagePathRegistry(cachedMeta?.imageRegistry ?? null)
+        setVaultFolders(cachedMeta?.folders ?? [])
+
+        // Persona config (quick single file read)
+        try {
+          const configContent = await window.vaultAPI.readFile(`${dirPath}/${PERSONA_CONFIG_PATH}`)
+          if (configContent) {
+            const config = parsePersonaConfig(configContent)
+            config ? loadVaultPersonas(config) : resetVaultPersonas()
+          } else {
+            resetVaultPersonas()
+          }
+        } catch { resetVaultPersonas() }
+
+        setLoadedDocuments(cachedDocs)
+        clearMetricsCache()
+
+        // buildGraph: defer by one tick to avoid main-thread blocking
+        await new Promise<void>(r => setTimeout(r, 0))
+        if (useVaultStore.getState().activeVaultId !== startVaultId) return
+        try {
+          const { nodes, links } = buildGraph(cachedDocs)
+          setGraph(nodes, links)
+        } catch (e: unknown) {
+          logger.warn('[vault] Graph build failed:', e instanceof Error ? e.message : String(e))
+        }
+        setGraphLayoutReady(true)
+
+        const fingerprint = buildFingerprint(cachedDocs)
+        setTimeout(async () => {
+          // Abort if vault switched before this async callback runs (prevents stale index)
+          if (useVaultStore.getState().activeVaultId !== startVaultId) return
+          const { links: currentLinks } = useGraphStore.getState()
+          const adj = buildAdjacencyMap(currentLinks)
+          try {
+            const cached = await loadTfIdfCache(dirPath, fingerprint)
+            if (useVaultStore.getState().activeVaultId !== startVaultId) return
+            if (cached) {
+              tfidfIndex.restore(cached)
+              if (currentLinks.length > 0) {
+                findLinksFromCache(cached, adj)
+                  .then(links => tfidfIndex.setImplicitLinks(links, adj))
+                  .catch((e: unknown) => logger.warn('[BM25] Implicit link computation failed:', e instanceof Error ? e.message : String(e)))
+              }
+            } else {
+              try {
+                const { serialized, implicitLinks } = await buildAndFindLinks(cachedDocs, adj, fingerprint)
+                tfidfIndex.restore(serialized)
+                tfidfIndex.setImplicitLinks(implicitLinks, adj)
+                saveTfIdfCache(dirPath, serialized)
+                  .catch((e: unknown) => logger.warn('[BM25] Cache save failed:', e instanceof Error ? e.message : String(e)))
+              } catch (e: unknown) {
+                logger.warn('[BM25] Worker build failed, falling back to main thread:', e instanceof Error ? e.message : String(e))
+                try { tfidfIndex.build(cachedDocs) } catch { /* rebuild also failed — silent */ }
+              }
+            }
+          } catch (e: unknown) {
+            logger.warn('[BM25] Index initialization failed, retrying build:', e instanceof Error ? e.message : String(e))
+            try { tfidfIndex.build(cachedDocs) } catch { /* rebuild also failed — silent */ }
+          }
+        }, 0)
+
+        clearImageDataCache()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Restore failed'
+        setError(msg)
+        setLoadedDocuments(null)
+        resetToMock()
+      } finally {
+        setPendingFileCount(null)
+      }
+    },
+    [loadVault, setLoadedDocuments, setImagePathRegistry, setVaultFolders, clearImageDataCache,
+     setError, setPendingFileCount,
+     setGraph, setGraphLayoutReady, resetToMock, loadVaultPersonas, resetVaultPersonas]
+  )
+
+  const loadVaultBackground = useCallback(
+    async (vaultId: string, dirPath: string) => {
+      if (!window.vaultAPI) return
+      const { vaultDocsCache } = useVaultStore.getState()
+      if (vaultDocsCache[vaultId]?.length) return  // already in-memory
+      try {
+        // ── docsCache hit → skip file reading and parsing entirely ──────────
+        if (window.vaultAPI.scanMetadata) {
+          try {
+            const meta = await window.vaultAPI.scanMetadata(dirPath)
+            if (meta?.length) {
+              const fp = buildDocsFingerprint(meta.map(m => ({ relativePath: m.relativePath, mtime: m.mtime })))
+              const hit = await loadDocsCache(dirPath, fp)
+              if (hit) {
+                useVaultStore.getState().cacheVaultDocs(vaultId, hit.docs)
+                useVaultStore.setState((s) => ({
+                  vaultMetaCache: {
+                    ...s.vaultMetaCache,
+                    [vaultId]: { imageRegistry: hit.imageRegistry ?? null, folders: hit.folders ?? [] }
+                  }
+                }))
+                return
+              }
+            }
+          } catch { /* docsCache miss → fall through to loadFiles */ }
+        }
+
+        // ── Cache miss: read files + parse, then save ────────────────────────
+        const { files, folders, imageRegistry } = await window.vaultAPI.loadFiles(dirPath)
+        if (!files?.length) return
+        const docs = await parseVaultFilesAsync(files)
+        useVaultStore.getState().cacheVaultDocs(vaultId, docs)
+        useVaultStore.setState((s) => ({
+          vaultMetaCache: {
+            ...s.vaultMetaCache,
+            [vaultId]: { imageRegistry: imageRegistry ?? null, folders: folders ?? [] }
+          }
+        }))
+        // Save so next restart gets a cache hit
+        const metaForFp = files.map(f => ({ relativePath: f.relativePath, mtime: f.mtime ?? 0 }))
+        saveDocsCache(dirPath, buildDocsFingerprint(metaForFp), docs, folders ?? [], imageRegistry ?? null)
+          .catch(() => { /* background save failure is silent */ })
+      } catch {
+        // Silent failure
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
+  // Expose cacheVaultDocs and setBgLoadingInfo via closure (used in App.tsx)
+  void cacheVaultDocs
+  void setBgLoadingInfo
+
+  return { vaultPath, loadVault, loadVaultCached, loadVaultBackground }
 }

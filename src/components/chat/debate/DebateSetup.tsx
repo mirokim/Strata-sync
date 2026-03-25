@@ -30,13 +30,14 @@ export function DebateSetup({ onBack, onOpenSettings }: DebateSetupProps) {
       mode,
       topic: topic.trim(),
       maxRounds,
-      participants: selectedProviders,
+      selectedProviders,
       roles: mode === 'roleAssignment' || mode === 'battle' ? roles : [],
       judgeProvider: mode === 'battle' ? (judgeProvider ?? undefined) : undefined,
       referenceText: useReference ? referenceText : '',
       useReference,
       referenceFiles: useReference ? referenceFiles : [],
-      pacing: { mode: pacingMode, autoDelaySeconds: autoDelay },
+      pacingMode,
+      autoDelay,
     })
   }
 

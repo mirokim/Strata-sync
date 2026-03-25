@@ -1,7 +1,7 @@
 import type { ChatMessage, SpeakerId, DirectorId, Attachment, LoadedDocument } from '@/types'
 import type { ConversionMeta } from '@/lib/mdConverter'
 import { logger } from '@/lib/logger'
-import { MODEL_OPTIONS, getProviderForModel, type ProviderId } from '@/lib/modelConfig'
+import { MODEL_OPTIONS, getProviderForModel, WORKER_MODEL_IDS, type ProviderId } from '@/lib/modelConfig'
 import { PERSONA_PROMPTS, buildProjectContext } from '@/lib/personaPrompts'
 import { selectMockResponse } from '@/data/mockResponses'
 import { useSettingsStore, getApiKey } from '@/stores/settingsStore'
@@ -18,6 +18,7 @@ import {
 import { useGraphStore } from '@/stores/graphStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { useMemoryStore } from '@/stores/memoryStore'
+import { useUsageStore } from '@/stores/usageStore'
 
 // ── Obsidian MD conversion (MD conversion editor pipeline) ────────────────────
 
@@ -142,22 +143,7 @@ async function importProvider(provider: string) {
 
 // ── Unicode sanitization ───────────────────────────────────────────────────────
 
-/**
- * Remove lone Unicode surrogates from a string.
- *
- * JavaScript strings are UTF-16. Slicing document content at a byte boundary
- * (e.g. body.slice(0, 1500)) can split a surrogate pair, leaving an orphaned
- * high surrogate (U+D800–DBFF) or low surrogate (U+DC00–DFFF).
- * JSON.stringify then produces invalid JSON and Anthropic's API returns 400.
- *
- * Regex: match valid pair (keep) OR lone surrogate (remove).
- */
-function sanitize(str: string): string {
-  return str.replace(
-    /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
-    m => m.length === 2 ? m : ''
-  )
-}
+import { sanitizeUnicode as sanitize } from '@/lib/utils'
 
 // ── Message history conversion ─────────────────────────────────────────────────
 
@@ -215,13 +201,8 @@ const GLOBAL_INTENT_RE = /전체|전반적|모든\s*문서|프로젝트\s*전체
 
 // ── Multi-Agent RAG helpers ───────────────────────────────────────────────────
 
-/** Cheapest Worker model ID per provider */
-const WORKER_MODELS: Record<string, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  openai: 'gpt-4.1-mini',
-  gemini: 'gemini-2.5-flash-lite',
-  grok: 'grok-3-mini',
-}
+/** Cheapest Worker model ID per provider — sourced from modelConfig */
+const WORKER_MODELS = WORKER_MODEL_IDS
 
 /**
  * Returns the cheapest Worker model for the current model's provider.
@@ -298,11 +279,14 @@ export async function fetchRAGContext(
   currentSpeaker?: string
 ): Promise<string> {
   try {
+    // Snapshot loadedDocuments once to avoid race conditions from concurrent vault updates
+    const loadedDocumentsSnapshot = useVaultStore.getState().loadedDocuments
+
     // ── Global exploration intent: hub-node-based full graph traversal ──────────
     // Skip keyword search and collect broad context directly via hub-centered BFS
     if (GLOBAL_INTENT_RE.test(userMessage)) {
       useGraphStore.getState().setAiHighlightNodes(getGlobalContextDocIds(35, 4))
-      return buildGlobalGraphContext(35, 4)
+      return await buildGlobalGraphContext(35, 4)
     }
 
     // ── Stage 1: Direct string search (attempted first) ────────────────────────
@@ -312,10 +296,11 @@ export async function fetchRAGContext(
     // Re-sort with newest docs first: when keyword scores are similar, promote newer docs
     // 180-day half-life recency boost (max +0.25) — 2020 documents effectively score 0
     {
-      const _rdocs = useVaultStore.getState().loadedDocuments
+      const _rdocs = loadedDocumentsSnapshot
       const _rdocMap = new Map(_rdocs?.map(d => [d.id, d]) ?? [])
       const _rnow = Date.now()
-      const HALF_LIFE_MS = 180 * 24 * 60 * 60 * 1000
+      const halfLifeDays = useSettingsStore.getState().searchConfig.recencyHalfLifeDays
+      const HALF_LIFE_MS = halfLifeDays * 24 * 60 * 60 * 1000
       const recBoost = (docId: string) => {
         const d = _rdocMap.get(docId)
         if (!d) return 0
@@ -333,7 +318,7 @@ export async function fetchRAGContext(
     // score >= 0.2 single match (generic words like "meeting", "document") used as BFS seed only to prevent false positives
     const strongPinnedHits = directHits.filter(r => r.score >= 0.4)
     if (strongPinnedHits.length > 0) {
-      const { loadedDocuments: _docs, } = useVaultStore.getState()
+      const _docs = loadedDocumentsSnapshot
       const { multiAgentRAG, personaModels } = useSettingsStore.getState()
       const docMap = new Map(_docs?.map(d => [d.id, d]) ?? [])
 
@@ -368,7 +353,7 @@ export async function fetchRAGContext(
 
       if (pinnedParts.length > 1) {
         const pinnedCtx = pinnedParts.join('')
-        const bfsCtx = buildDeepGraphContext(directHits, 2, 10, tokenizeQuery(userMessage))
+        const bfsCtx = await buildDeepGraphContext(directHits, 2, 10, tokenizeQuery(userMessage))
         logger.debug(`[RAG] Multi-agent: pinned=${pinnedCtx.length} chars, BFS=${bfsCtx.length} chars`)
         useGraphStore.getState().setAiHighlightNodes(directHits.map(r => r.doc_id))
         return pinnedCtx + (bfsCtx ? '\n' + bfsCtx : '')
@@ -398,8 +383,7 @@ export async function fetchRAGContext(
     }
 
     // Always include _index.md
-    const { loadedDocuments: _vaultDocs } = useVaultStore.getState()
-    const indexDoc = _vaultDocs?.find(d => d.filename.toLowerCase() === '_index.md')
+    const indexDoc = loadedDocumentsSnapshot?.find(d => d.filename.toLowerCase() === '_index.md')
     if (indexDoc && !seeds.some(r => r.doc_id === indexDoc.id)) {
       const firstSection = indexDoc.sections.find(s => s.body.trim())
       seeds.unshift({
@@ -422,7 +406,7 @@ export async function fetchRAGContext(
     if (reranked.length > 0) {
       useGraphStore.getState().setAiHighlightNodes(reranked.map(r => r.doc_id))
     }
-    const ctx = buildDeepGraphContext(reranked, 3, 20, tokenizeQuery(userMessage))
+    const ctx = await buildDeepGraphContext(reranked, 3, 20, tokenizeQuery(userMessage))
     logger.debug(`[RAG] Context generation complete: ${ctx.length} chars`)
     return ctx
   } catch (err) {
@@ -551,7 +535,9 @@ export async function streamMessage(
   history: ChatMessage[],
   onChunk: (chunk: string) => void,
   attachments?: Attachment[],
-  overrideRagContext?: string   // bypass keyword search — used for node selection AI analysis etc.
+  overrideRagContext?: string,   // bypass keyword search — used for node selection AI analysis etc.
+  onThinkingChunk?: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const { personaModels, projectInfo, directorBios, customPersonas, personaPromptOverrides, responseInstructions, ragInstruction, personaDocumentIds } = useSettingsStore.getState()
 
@@ -678,21 +664,26 @@ export async function streamMessage(
     { role: 'user' as const, content: sanitize(fullUserMessage) },
   ]
 
+  // Record token usage for all provider calls (matches streamMessageRaw behavior)
+  const onUsage = (inputTokens: number, outputTokens: number) => {
+    useUsageStore.getState().recordUsage(modelId, inputTokens, outputTokens)
+  }
+
   // Dynamically import the provider module to keep bundle splitting clean
   switch (model.provider) {
     case 'anthropic': {
       const { streamCompletion } = await import('./providers/anthropic')
-      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments)
+      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments, onUsage, signal)
       break
     }
     case 'openai': {
       const { streamCompletion } = await import('./providers/openai')
-      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments)
+      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments, onUsage, signal)
       break
     }
     case 'gemini': {
       const { streamCompletion } = await import('./providers/gemini')
-      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments)
+      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, imageAttachments, onUsage, signal)
       break
     }
     case 'grok': {
@@ -701,7 +692,7 @@ export async function streamMessage(
       if (imageAttachments.length > 0) {
         onChunk('[Grok does not support image analysis. Text only will be processed.]\n\n')
       }
-      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk)
+      await streamCompletion(apiKey, modelId, cleanSystemPrompt, allMessages, onChunk, [], onUsage, signal)
       break
     }
     default: {
@@ -713,4 +704,40 @@ export async function streamMessage(
   if (overrideRagContext === undefined) {
     useGraphStore.getState().setAiHighlightNodes([])
   }
+}
+
+// ── Raw stream helper (used by Edit Agent) ─────────────────────────────────
+
+/**
+ * Low-level streaming wrapper used by the Edit Agent and other non-chat callers.
+ * Routes to the appropriate provider, records usage, and sanitizes inputs.
+ */
+export async function streamMessageRaw(
+  modelId: string,
+  systemPrompt: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  onChunk: (chunk: string) => void,
+): Promise<void> {
+  const provider = getProviderForModel(modelId)
+  if (!provider) throw new Error(`[streamMessageRaw] Unknown model: ${modelId}`)
+  const apiKey = getApiKey(provider)
+  if (!apiKey) throw new Error(`[streamMessageRaw] No API key for provider: ${provider}`)
+
+  const onUsage = (inputTokens: number, outputTokens: number) => {
+    useUsageStore.getState().recordUsage(modelId, inputTokens, outputTokens)
+  }
+
+  const sanitizedMessages = messages.map(m => ({ role: m.role, content: sanitize(m.content) }))
+  const cleanSys = sanitize(systemPrompt)
+
+  // Cast to a generic signature to avoid provider union type intersection issues
+  type RawStream = (
+    apiKey: string, model: string, sys: string,
+    messages: { role: 'user' | 'assistant'; content: string }[],
+    onChunk: (chunk: string) => void,
+    imageAttachments?: Attachment[],
+    onUsage?: (inputTokens: number, outputTokens: number) => void,
+  ) => Promise<void>
+  const { streamCompletion } = await importProvider(provider)
+  await (streamCompletion as RawStream)(apiKey, modelId, cleanSys, sanitizedMessages, onChunk, [], onUsage)
 }

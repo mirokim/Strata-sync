@@ -2,7 +2,7 @@
  * personaVaultConfig.ts
  *
  * Serialize / deserialize the vault-scoped persona config file.
- * Stored at: {vaultPath}/.rembrant/personas.md
+ * Stored at: {vaultPath}/.strata-sync/personas.md
  *
  * Format: YAML frontmatter (gray-matter) with a short markdown comment body.
  */

@@ -11,6 +11,12 @@ export type SpeakerId =
 /** The 5 actual director personas (excludes the 'unknown' fallback). */
 export type DirectorId = Exclude<SpeakerId, 'unknown'>
 
+/** AI provider identity (authoritative definition). */
+export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'grok'
+
+/** All possible participants in a discussion: AI providers, directors, or the user. */
+export type DiscussionParticipantId = ProviderId | DirectorId | 'user'
+
 // ── Document model ────────────────────────────────────────────────────────────
 
 export interface DocSection {
@@ -25,14 +31,22 @@ export interface DocSection {
 export interface MockDocument {
   id: string
   filename: string
+  /** Folder path relative to vault root. Empty string for mock data. */
+  folderPath: string
+  /** Absolute filesystem path. Empty string for mock data. */
+  absolutePath: string
   speaker: SpeakerId
   date: string
+  /** File last-modified timestamp (ms) — from filesystem stat */
+  mtime?: number
   tags: string[]
   /** Top-level [[wiki-link]] references in frontmatter */
   links: string[]
   sections: DocSection[]
   /** Full markdown string including YAML frontmatter (for FrontmatterBlock display) */
   rawContent: string
+  /** Image filenames referenced via ![[image.png]] embeds in this document */
+  imageRefs?: string[]
 }
 
 // ── Graph types ───────────────────────────────────────────────────────────────
@@ -110,6 +124,8 @@ export interface ChatMessage {
   streaming?: boolean
   /** Files attached to this message (images for vision, text for context injection) */
   attachments?: Attachment[]
+  /** Sub-agent/thinking process streamed before the main response */
+  thinking?: string
 }
 
 // ── Vault types (Phase 6) ─────────────────────────────────────────────────────
@@ -144,9 +160,32 @@ export interface LoadedDocument {
   rawContent: string
   /** Image filenames referenced via ![[image.png]] embeds in this document */
   imageRefs?: string[]
+  /** Original source URL (from frontmatter `source:` — Confluence/Jira import) */
+  source?: string
+  /** Platform origin (e.g. 'confluence', 'jira') */
+  origin?: string
+  /** Document title from frontmatter */
+  title?: string
+  /** Document type from frontmatter: 'spec' | 'decision' | 'meeting' | 'guide' | 'reference' */
+  type?: string
+  /** Document lifecycle status from frontmatter: 'active' | 'outdated' | 'deprecated' */
+  status?: string
+  /** Wikilink to the document that supersedes this one (e.g. "[[new_doc]]") */
+  supersededBy?: string
+  /** Structural hub links from frontmatter `related:` (separate from wiki-link body references) */
+  related?: string[]
+  /**
+   * Graph RAG link weight hint from frontmatter `graph_weight:`.
+   * - normal (default): standard traversal, link weight 1.0
+   * - low: traverse but link weight ~0.3 (100-499 outbound links)
+   * - skip: exclude from RAG traversal entirely (500+ outbound links, link-only hubs)
+   */
+  graphWeight?: 'normal' | 'low' | 'skip'
+  /** Multi-vault: vault label this document belongs to (for Slack RAG context attribution) */
+  vaultLabel?: string
 }
 
-// ── RAG search types ─────────────────────────────────────────────────────────
+// ── RAG types ───────────────────────────────────────────────────────────────
 
 /** A single result from keyword/TF-IDF search */
 export interface SearchResult {
@@ -182,19 +221,19 @@ export interface DiscussionConfig {
   mode: DiscussionMode
   topic: string
   maxRounds: number
-  participants: string[]
+  selectedProviders: string[]
   roles: RoleConfig[]
   judgeProvider?: string
   referenceText: string
   useReference: boolean
   referenceFiles: ReferenceFile[]
-  pacing: { mode: 'auto' | 'manual'; autoDelaySeconds: number }
+  pacingMode: 'auto' | 'manual'
+  autoDelay: number
 }
 
 export interface DiscussionMessage {
   id: string
-  /** 'user' or a ProviderId ('anthropic' | 'openai' | 'gemini' | 'grok') */
-  provider: string
+  provider: DiscussionParticipantId
   content: string
   round: number
   timestamp: number
@@ -219,6 +258,6 @@ export interface DebateCallbacks {
 
 export type ThemeId = 'dark' | 'oled' | 'white'
 export type GraphMode = '3d' | '2d'
-export type CenterTab = 'graph' | 'document' | 'editor'
+export type CenterTab = 'graph' | 'document' | 'editor' | 'settings'
 export type AppState = 'launch' | 'main'
 export type NodeColorMode = 'document' | 'auto' | 'speaker' | 'folder' | 'tag' | 'topic'

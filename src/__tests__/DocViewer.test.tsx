@@ -82,8 +82,8 @@ describe('DocViewer — document render', () => {
 
   it('displays speaker label badge', () => {
     render(<DocViewer />)
-    // SPEAKER_CONFIG['chief_director'].label is 'Chief' — may appear multiple times
-    const chiefs = screen.getAllByText('Chief')
+    // SPEAKER_CONFIG['chief_director'].label is 'STRATA BOT' — may appear multiple times
+    const chiefs = screen.getAllByText('STRATA BOT')
     expect(chiefs.length).toBeGreaterThanOrEqual(1)
   })
 

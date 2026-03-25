@@ -13,8 +13,10 @@ import {
   Settings, Cpu, GitMerge, Keyboard, Info,
   Layers,
   Users, Tag, Download,
+  DollarSign, FolderOpen, MessageSquare, Fish, Search,
 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useUIStore } from '@/stores/uiStore'
 import GeneralTab from './tabs/GeneralTab'
 import AITab from './tabs/AITab'
 import PersonasTab from './tabs/PersonasTab'
@@ -26,12 +28,18 @@ import StatsTab from './tabs/StatsTab'
 import TrashTab from './tabs/TrashTab'
 import ShortcutsTab from './tabs/ShortcutsTab'
 import ConfluenceTab from './tabs/ConfluenceTab'
+import UsageTab from './tabs/UsageTab'
+import VaultManagerTab from './tabs/VaultManagerTab'
+import SlackBotTab from './tabs/SlackBotTab'
+import MirofishTab from './tabs/MirofishTab'
+import SearchTab from './tabs/SearchTab'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type SettingsTab =
-  | 'stats' | 'trash'
-  | 'general' | 'ai' | 'personas' | 'debate' | 'shortcuts' | 'project' | 'tags'
+  | 'stats' | 'trash' | 'usage' | 'vault-manager'
+  | 'general' | 'ai' | 'search' | 'personas' | 'debate' | 'shortcuts' | 'project' | 'tags'
+  | 'slack-bot' | 'mirofish'
   | 'confluence'
   | 'about'
 
@@ -44,9 +52,10 @@ const NAV: NavGroup[] = [
   {
     label: 'Tools',
     items: [
-      { id: 'stats',      icon: BarChart2, label: 'Statistics' },
-      { id: 'trash',      icon: Trash2,    label: 'Trash' },
-      // { id: 'confluence', icon: Download,  label: 'Import Confluence' },  // hidden for now
+      { id: 'stats',         icon: BarChart2,      label: 'Statistics' },
+      { id: 'usage',         icon: DollarSign,     label: 'Usage' },
+      { id: 'vault-manager', icon: FolderOpen,     label: 'Vault Manager' },
+      { id: 'trash',         icon: Trash2,         label: 'Trash' },
     ],
   },
   {
@@ -54,11 +63,19 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'general',   icon: Settings,  label: 'General' },
       { id: 'ai',        icon: Cpu,       label: 'AI Settings' },
+      { id: 'search',    icon: Search,    label: 'Search / RAG' },
       { id: 'tags',      icon: Tag,       label: 'Tags' },
       { id: 'personas',  icon: Users,     label: 'Personas' },
       { id: 'project',   icon: Layers,    label: 'Project' },
       { id: 'debate',    icon: GitMerge,  label: 'Debate' },
       { id: 'shortcuts', icon: Keyboard,  label: 'Shortcuts' },
+    ],
+  },
+  {
+    label: 'Integrations',
+    items: [
+      { id: 'slack-bot',  icon: MessageSquare, label: 'Slack Bot' },
+      { id: 'mirofish',   icon: Fish,          label: 'MiroFish' },
     ],
   },
   {
@@ -94,9 +111,14 @@ function renderTabContent(tab: SettingsTab) {
     case 'project':   return <ProjectTab />
     case 'debate':    return <DebateTab />
     case 'tags':      return <TagsTab />
-    case 'shortcuts':  return <ShortcutsTab />
-    case 'confluence': return <ConfluenceTab />
-    case 'about':      return <AboutTab />
+    case 'shortcuts':      return <ShortcutsTab />
+    case 'confluence':     return <ConfluenceTab />
+    case 'usage':          return <UsageTab />
+    case 'vault-manager':  return <VaultManagerTab />
+    case 'slack-bot':      return <SlackBotTab />
+    case 'mirofish':       return <MirofishTab />
+    case 'search':         return <SearchTab />
+    case 'about':          return <AboutTab />
     default:          return <PlaceholderContent label={ALL_ITEMS.find(i => i.id === tab)?.label ?? tab} />
   }
 }
@@ -104,7 +126,11 @@ function renderTabContent(tab: SettingsTab) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SettingsPanel() {
-  const { settingsPanelOpen, resetPersonaModels, setSettingsPanelOpen } = useSettingsStore()
+  const { resetPersonaModels } = useSettingsStore()
+  const centerTab = useUIStore((s) => s.centerTab)
+  const setCenterTab = useUIStore((s) => s.setCenterTab)
+  const settingsPanelOpen = centerTab === 'settings'
+  const setSettingsPanelOpen = (open: boolean) => setCenterTab(open ? 'settings' : 'graph')
   // Default to 'ai' so all persona/vault tests pass without navigating
   const [activeTab, setActiveTab] = useState<SettingsTab>('ai')
 

@@ -22,7 +22,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useGraphStore } from '@/stores/graphStore'
-import { parseMarkdownFile, parseVaultFiles } from '@/lib/markdownParser'
+import { parseMarkdownFile, parseVaultFilesAsync } from '@/lib/markdownParser'
 import { buildGraph } from '@/lib/graphBuilder'
 import { MOCK_DOCUMENTS } from '@/data/mockDocuments'
 import type { LoadedDocument, MockDocument } from '@/types'
@@ -242,7 +242,7 @@ export default function MarkdownEditor() {
       if (vaultPath && window.vaultAPI) {
         const { files } = await window.vaultAPI.loadFiles(vaultPath)
         if (files) {
-          const docs = parseVaultFiles(files) as LoadedDocument[]
+          const docs = await parseVaultFilesAsync(files) as LoadedDocument[]
           setLoadedDocuments(docs)
           const { nodes, links } = buildGraph(docs)
           setNodes(nodes)

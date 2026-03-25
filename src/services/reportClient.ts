@@ -7,15 +7,7 @@ import type { ChatMessage } from '@/types'
 import { MODEL_OPTIONS, getProviderForModel } from '@/lib/modelConfig'
 import { SPEAKER_CONFIG } from '@/lib/speakerConfig'
 import { useSettingsStore, getApiKey } from '@/stores/settingsStore'
-
-// ── Sanitize lone Unicode surrogates (same logic as llmClient.ts) ──────────────
-
-function sanitize(str: string): string {
-  return str.replace(
-    /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
-    m => m.length === 2 ? m : ''
-  )
-}
+import { sanitizeUnicode as sanitize } from '@/lib/utils'
 
 // ── Conversation → readable text ──────────────────────────────────────────────
 

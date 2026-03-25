@@ -1,8 +1,7 @@
-import type { DirectorId } from '@/types'
+import type { DirectorId, ProviderId } from '@/types'
 
-// ── Provider identity ─────────────────────────────────────────────────────────
-
-export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'grok'
+// Re-export ProviderId so existing imports from modelConfig continue to work
+export type { ProviderId } from '@/types'
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
@@ -22,28 +21,56 @@ export const MODEL_OPTIONS: ModelOption[] = [
   // ── OpenAI (GPT) ──
   { id: 'gpt-4.1',                    label: 'GPT-4.1',               provider: 'openai'    },
   { id: 'gpt-4.1-mini',               label: 'GPT-4.1 Mini',          provider: 'openai'    },
+  { id: 'gpt-4.1-nano',               label: 'GPT-4.1 Nano',          provider: 'openai'    },
   { id: 'gpt-4o',                     label: 'GPT-4o',                provider: 'openai'    },
+  { id: 'gpt-4o-mini',                label: 'GPT-4o Mini',           provider: 'openai'    },
   { id: 'o3',                         label: 'o3',                    provider: 'openai'    },
+  { id: 'o3-mini',                    label: 'o3 Mini',               provider: 'openai'    },
   { id: 'o4-mini',                    label: 'o4-mini',               provider: 'openai'    },
 
   // ── Google (Gemini) ──
   { id: 'gemini-2.5-pro',             label: 'Gemini 2.5 Pro',        provider: 'gemini'    },
   { id: 'gemini-2.5-flash',           label: 'Gemini 2.5 Flash',      provider: 'gemini'    },
   { id: 'gemini-2.5-flash-lite',      label: 'Gemini 2.5 Flash Lite', provider: 'gemini'    },
+  { id: 'gemini-2.0-flash',           label: 'Gemini 2.0 Flash',      provider: 'gemini'    },
 
   // ── xAI (Grok) ──
   { id: 'grok-3',                     label: 'Grok 3',                provider: 'grok'      },
   { id: 'grok-3-mini',                label: 'Grok 3 Mini',           provider: 'grok'      },
+  { id: 'grok-3-fast',                label: 'Grok 3 Fast',           provider: 'grok'      },
 ]
+
+// ── Default model IDs (single source of truth) ──────────────────────────────
+
+export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
+export const DEFAULT_FAST_MODEL_ID = 'claude-haiku-4-5-20251001'
 
 // ── Default persona → model mapping ──────────────────────────────────────────
 
 export const DEFAULT_PERSONA_MODELS: Record<DirectorId, string> = {
-  chief_director: 'claude-sonnet-4-6',
+  chief_director: DEFAULT_MODEL_ID,
   art_director:   'gpt-4.1',
   plan_director:  'gemini-2.5-flash',
   level_director: 'grok-3',
-  prog_director:  'claude-haiku-4-5-20251001',
+  prog_director:  DEFAULT_FAST_MODEL_ID,
+}
+
+// ── Worker model IDs (cheapest per provider, for lightweight tasks) ──────────
+
+export const WORKER_MODEL_IDS: Record<ProviderId, string> = {
+  anthropic: DEFAULT_FAST_MODEL_ID,
+  openai: 'gpt-4.1-mini',
+  gemini: 'gemini-2.5-flash-lite',
+  grok: 'grok-3-mini',
+}
+
+// ── Default debate model IDs (fallback for non-persona debate participants) ──
+
+export const DEBATE_MODEL_IDS: Record<string, string> = {
+  anthropic: DEFAULT_MODEL_ID,
+  openai: 'gpt-4.1',
+  gemini: 'gemini-2.5-flash',
+  grok: 'grok-3',
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────

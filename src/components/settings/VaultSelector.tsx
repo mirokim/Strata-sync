@@ -29,7 +29,7 @@ export default function VaultSelector() {
   // ── Suppress watcher events around explicit load/watchStart calls ─────────
   // Windows fs.watch can fire spurious events immediately after watchStart.
   // We suppress vault:changed for 3 s after any explicit load or watchStart.
-  // Note: .rembrant/ writes (personas.md) are already filtered in main.cjs,
+  // Note: .strata-sync/ writes (personas.md) are already filtered in main.cjs,
   // so suppressWatch only needs to cover the initial watcher startup window.
   const suppressWatchRef = useRef(false)
   const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

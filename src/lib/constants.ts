@@ -7,22 +7,29 @@
 // ── Vault / File System ────────────────────────────────────────────────────────
 
 /** Path to the persona config file within the vault (relative to vault root) */
-export const PERSONA_CONFIG_PATH = '.rembrant/personas.md'
+export const PERSONA_CONFIG_PATH = '.strata-sync/personas.md'
+
+/** Path to the edit-agent log file within the vault (relative to vault root) */
+export const EDIT_AGENT_LOG_PATH = '.strata-sync/edit-agent-logs.jsonl'
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 /** Per-persona start delay (ms) when streaming multiple personas simultaneously */
 export const STREAM_STAGGER_MS = 100
 
+/** Max file size for chat attachments / debate reference files (10 MB) */
+export const MAX_FILE_SIZE = 10 * 1024 * 1024
+
 // ── Graph ────────────────────────────────────────────────────────────────────
 
 /** Default strength for graph edges created from wikilinks */
 export const DEFAULT_LINK_STRENGTH = 0.5
 
-// ── Debate ────────────────────────────────────────────────────────────────────
+/** Minimum pixel gap between node labels to prevent overlap (Graph2D / Graph2DCanvas) */
+export const LABEL_MIN_GAP = 64
 
-/** Default role for debate participants */
-export const DEFAULT_DEBATE_ROLE = 'Neutral'
+/** Viewport padding pixels used for fit-to-view (Graph2D / Graph2DCanvas) */
+export const GRAPH_VIEW_PADDING = 48
 
 // ── TF-IDF / Graph Analysis ───────────────────────────────────────────────────
 

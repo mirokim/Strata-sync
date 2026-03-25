@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AppState, CenterTab, ThemeId, GraphMode, NodeColorMode } from '@/types'
 
+/** Minimum right-panel width when the edit-agent panel is open alongside chat */
+export const RIGHT_PANEL_AGENT_MIN = 680
+
 interface UIState {
   appState: AppState
   centerTab: CenterTab
@@ -16,6 +19,19 @@ interface UIState {
   leftPanelCollapsed: boolean
   /** Whether the right (chat) panel is collapsed */
   rightPanelCollapsed: boolean
+  /** Vault ID to compare side-by-side (null = single vault view) */
+  compareVaultId: string | null
+  /** Whether the Edit Agent side panel is visible */
+  editAgentPanelVisible: boolean
+  /** Active sub-tab in the Edit Agent panel */
+  editAgentSubTab: 'chat' | 'log'
+  /** Persisted panel widths */
+  leftPanelWidth: number
+  rightPanelWidth: number
+  agentPanelWidth: number
+  /** Whether Ctrl+K command palette is open */
+  commandPaletteOpen: boolean
+
   setAppState: (s: AppState) => void
   setCenterTab: (t: CenterTab) => void
   setSelectedDoc: (id: string | null) => void
@@ -29,6 +45,15 @@ interface UIState {
   closeEditor: () => void
   toggleLeftPanel: () => void
   toggleRightPanel: () => void
+  setCompareVault: (id: string | null) => void
+  toggleEditAgentPanel: () => void
+  setEditAgentSubTab: (tab: 'chat' | 'log') => void
+  setLeftPanelWidth: (w: number) => void
+  setRightPanelWidth: (w: number) => void
+  setAgentPanelWidth: (w: number) => void
+  toggleCommandPalette: () => void
+  setCommandPaletteOpen: (open: boolean) => void
+  toggleSettingsPanel: () => void
 }
 
 export const useUIStore = create<UIState>()(
@@ -44,6 +69,13 @@ export const useUIStore = create<UIState>()(
       editingDocId: null,
       leftPanelCollapsed: false,
       rightPanelCollapsed: false,
+      compareVaultId: null,
+      editAgentPanelVisible: true,
+      editAgentSubTab: 'chat',
+      leftPanelWidth: 250,
+      rightPanelWidth: 680,
+      agentPanelWidth: 340,
+      commandPaletteOpen: false,
 
       setAppState: (appState) => set({ appState }),
       setCenterTab: (centerTab) => set({ centerTab }),
@@ -56,6 +88,15 @@ export const useUIStore = create<UIState>()(
       closeEditor: () => set({ editingDocId: null, centerTab: 'graph' }),
       toggleLeftPanel: () => set(s => ({ leftPanelCollapsed: !s.leftPanelCollapsed })),
       toggleRightPanel: () => set(s => ({ rightPanelCollapsed: !s.rightPanelCollapsed })),
+      setCompareVault: (compareVaultId) => set({ compareVaultId }),
+      toggleEditAgentPanel: () => set(s => ({ editAgentPanelVisible: !s.editAgentPanelVisible })),
+      setEditAgentSubTab: (editAgentSubTab) => set({ editAgentSubTab }),
+      setLeftPanelWidth: (leftPanelWidth) => set({ leftPanelWidth }),
+      setRightPanelWidth: (rightPanelWidth) => set({ rightPanelWidth }),
+      setAgentPanelWidth: (agentPanelWidth) => set({ agentPanelWidth }),
+      toggleCommandPalette: () => set(s => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+      setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
+      toggleSettingsPanel: () => set(s => ({ centerTab: s.centerTab === 'settings' ? 'graph' : 'settings' })),
     }),
     {
       name: 'strata-sync-ui',
@@ -72,6 +113,9 @@ export const useUIStore = create<UIState>()(
         nodeColorMode: state.nodeColorMode,
         // graphMode is NOT persisted — app always starts in 3D (user intent)
         panelOpacity: state.panelOpacity,
+        leftPanelWidth: state.leftPanelWidth,
+        rightPanelWidth: state.rightPanelWidth,
+        agentPanelWidth: state.agentPanelWidth,
       }),
     }
   )

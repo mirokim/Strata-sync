@@ -2,7 +2,7 @@
  * usePersonaVaultSaver
  *
  * Watches persona-related settings changes and debounce-saves them to
- * {vaultPath}/.rembrant/personas.md whenever a vault is active.
+ * {vaultPath}/.strata-sync/personas.md whenever a vault is active.
  *
  * This makes persona config per-project: each vault stores its own config file.
  */

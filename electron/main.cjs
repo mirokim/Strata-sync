@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, session, ipcMain, dialog, protocol, net } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 const { spawn } = require('child_process')
 
 let mainWindow
@@ -13,6 +14,71 @@ const ALLOWED_API_DOMAINS = [
   'api.x.ai',
 ]
 
+// ── Slack bot subprocess ────────────────────────────────────────────────────────
+let slackBotProcess = null
+const slackBotLogBuffer = []  // ring buffer — last 500 lines
+
+const _PYTHON_CMD = process.platform === 'win32' ? 'python' : 'python3'
+
+// ── RAG API authentication token (generated once at app startup) ────────────
+const ragApiToken = crypto.randomBytes(32).toString('hex')
+
+function startSlackBot(config) {
+  if (slackBotProcess) return { ok: false, error: 'Already running' }
+  const botDir = path.join(__dirname, '..', 'bot')
+  const configPath = path.join(botDir, 'config.json')
+
+  // Merge caller-supplied config with existing file (if any)
+  // Whitelist allowed keys to prevent arbitrary config injection
+  const ALLOWED_BOT_KEYS = new Set(['botToken', 'appToken', 'signingSecret', 'channels', 'debug'])
+  let existing = {}
+  try { existing = JSON.parse(fs.readFileSync(configPath, 'utf8')) } catch {}
+  const safeConfig = Object.fromEntries(Object.entries(config).filter(([k]) => ALLOWED_BOT_KEYS.has(k)))
+  const merged = { ...existing, ...safeConfig }
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf8')
+
+  const proc = spawn(_PYTHON_CMD, ['bot.py', '--headless'], {
+    cwd: botDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, RAG_API_TOKEN: ragApiToken },
+  })
+
+  const sendToWindow = (channel, ...args) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
+  }
+
+  const pushLog = (line) => {
+    slackBotLogBuffer.push(line)
+    if (slackBotLogBuffer.length > 500) slackBotLogBuffer.splice(0, slackBotLogBuffer.length - 500)
+    sendToWindow('bot:log', line)
+  }
+
+  proc.stdout.on('data', (data) => {
+    const lines = data.toString().split('\n').filter(Boolean)
+    lines.forEach(line => pushLog(line))
+  })
+  proc.stderr.on('data', (data) => {
+    const lines = data.toString().split('\n').filter(Boolean)
+    lines.forEach(line => pushLog(`[ERR] ${line}`))
+  })
+  proc.on('exit', (code) => {
+    slackBotProcess = null
+    sendToWindow('bot:stopped', { code })
+  })
+  proc.on('error', (err) => {
+    slackBotProcess = null
+    sendToWindow('bot:log', `[ERROR] Process error: ${err.message}`)
+  })
+
+  slackBotProcess = proc
+  return { ok: true }
+}
+
+function stopSlackBot() {
+  if (!slackBotProcess) return
+  slackBotProcess.kill('SIGTERM')
+  slackBotProcess = null
+}
 
 // ── Vault path tracking (for IPC security validation) ─────────────────────────
 /** Absolute path of the currently loaded vault — updated on vault:load-files */
@@ -24,12 +90,20 @@ let currentVaultPath = null
  * Verify that filePath is strictly inside vaultPath (no path traversal).
  */
 function isInsideVault(vaultPath, filePath) {
-  const rel = path.relative(vaultPath, filePath)
-  return !rel.startsWith('..') && !path.isAbsolute(rel)
+  try {
+    const resolvedVault = fs.realpathSync(vaultPath)
+    const resolvedFile = fs.realpathSync(path.resolve(filePath))
+    const rel = path.relative(resolvedVault, resolvedFile)
+    return !rel.startsWith('..') && !path.isAbsolute(rel)
+  } catch {
+    // realpathSync fails if path doesn't exist yet (new file) — fall back to lexical check
+    const rel = path.relative(path.resolve(vaultPath), path.resolve(filePath))
+    return !rel.startsWith('..') && !path.isAbsolute(rel)
+  }
 }
 
 /** Recognized image file extensions within the vault */
-const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i
+const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|bmp|avif|tiff?|heic)$/i
 
 /**
  * Detect image MIME type from file magic bytes.
@@ -44,20 +118,31 @@ function detectMime(buffer, absPath) {
   if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
       buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp'
   if (buffer[0] === 0x42 && buffer[1] === 0x4D) return 'image/bmp'
+  // TIFF: little-endian II 0x2A00 or big-endian MM 0x002A
+  if ((buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00) ||
+      (buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A)) return 'image/tiff'
+  // HEIC/AVIF: ISO Base Media File Format — ftyp box at offset 4
+  if (buffer.length >= 12 && buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
+    const brand = buffer.slice(8, 12).toString('ascii')
+    if (/^(heic|heix|hevc|hevx)/.test(brand)) return 'image/heic'
+    if (/^(avif|avis)/.test(brand)) return 'image/avif'
+  }
   const head = buffer.slice(0, 64).toString('utf8')
   if (head.includes('<svg') || head.includes('<?xml')) return 'image/svg+xml'
   const ext = path.extname(absPath).slice(1).toLowerCase()
   return { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-           gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp' }[ext] ?? null
+           gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
+           avif: 'image/avif', tif: 'image/tiff', tiff: 'image/tiff', heic: 'image/heic' }[ext] ?? null
 }
 
 /**
  * Read an image file and return a base64 data URL (used by legacy IPC handlers).
+ * Async to avoid blocking Electron's main process thread on large images.
  */
-function readImageAsDataUrl(absPath) {
+async function readImageAsDataUrl(absPath) {
   let buffer
-  try { buffer = fs.readFileSync(absPath) } catch (err) {
-    console.warn('[vault] readImageAsDataUrl: readFileSync failed:', absPath, err.message)
+  try { buffer = await fs.promises.readFile(absPath) } catch (err) {
+    console.warn('[vault] readImageAsDataUrl: readFile failed:', absPath, err.message)
     return null
   }
   if (!buffer || buffer.length === 0) return null
@@ -158,64 +243,53 @@ protocol.registerSchemesAsPrivileged([
  *   folders: vault-relative paths to subdirectories
  *   images:  absolute paths to image files (paths only, content not read)
  */
-function collectVaultContents(vaultPath, dirPath, depth) {
-  if (depth === undefined) depth = 0
+async function collectVaultContents(vaultPath, dirPath, depth = 0) {
   if (depth > 10) return { files: [], folders: [], images: [] }
-  const files = []
-  const folders = []
-  const images = []
   let entries
   try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
   } catch (err) {
-    console.warn('[vault] readdirSync failed for', dirPath, err.message)
+    console.warn('[vault] readdir failed for', dirPath, err.message)
     return { files: [], folders: [], images: [] }
   }
+
+  const files = [], folders = [], images = []
+  const subPromises = []
 
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue  // skip hidden (.obsidian, etc.)
     const fullPath = path.join(dirPath, entry.name)
 
-    // ── Strategy for Synology Drive / cloud-backed virtual filesystems ──
-    // lstatSync can fail for "online-only" or Unicode-named files on virtual
-    // file systems.  We use entry.isDirectory() (from withFileTypes) which is
-    // reliable on most filesystems, then fall back to readdirSync for edge cases.
-
-    // 1) If name ends with .md → collect as markdown file
+    // 1) Markdown file
     if (entry.name.toLowerCase().endsWith('.md')) {
-      if (isInsideVault(vaultPath, fullPath)) {
-        files.push(fullPath)
-      }
+      if (isInsideVault(vaultPath, fullPath)) files.push(fullPath)
       continue
     }
 
-    // 2) If name is an image → collect path only (no content read)
+    // 2) Image file — collect path only
     if (IMAGE_EXTENSIONS.test(entry.name) && isInsideVault(vaultPath, fullPath)) {
       images.push(fullPath)
       continue
     }
 
-    // 3) Check isDirectory() before skipping by extension.
-    //    Directories named like "3D.v2" or "assets.bak" have extensions but must
-    //    still be recursed — entry.isDirectory() detects them correctly.
+    // 3) Check if directory (handles folders with extensions like "3D.v2")
     let entryIsDir = false
-    try { entryIsDir = entry.isDirectory() } catch { /* ignore — fallthrough to step 4 */ }
+    try { entryIsDir = entry.isDirectory() } catch {}
+    if (!entryIsDir && /\.\w{1,10}$/.test(entry.name)) continue
 
-    if (!entryIsDir && /\.\w{1,10}$/.test(entry.name)) continue  // non-dir file with extension
-
-    // 4) Either confirmed directory (entryIsDir=true) or no-extension entry
-    //    (virtual FS fallback: readdirSync determines if it's a readable directory).
-    try {
-      const relPath = path.relative(vaultPath, fullPath).replace(/\\/g, '/')
-      folders.push(relPath)
-      const sub = collectVaultContents(vaultPath, fullPath, depth + 1)
-      files.push(...sub.files)
-      folders.push(...sub.folders)
-      images.push(...sub.images)
-    } catch {
-      // Not a directory or not readable — skip silently
-    }
+    // 4) Subdirectory — async parallel traversal
+    const relPath = path.relative(vaultPath, fullPath).replace(/\\/g, '/')
+    folders.push(relPath)
+    subPromises.push(
+      collectVaultContents(vaultPath, fullPath, depth + 1).then(sub => {
+        files.push(...sub.files)
+        folders.push(...sub.folders)
+        images.push(...sub.images)
+      }).catch((e) => { console.warn('[vault] Subdirectory read failed:', e.message) })
+    )
   }
+
+  await Promise.all(subPromises)
   return { files, folders, images }
 }
 
@@ -233,34 +307,46 @@ function registerVaultIpcHandlers() {
   })
 
   // ── vault:load-files ─────────────────────────────────────────────────────────
-  ipcMain.handle('vault:load-files', (_event, vaultPath) => {
+  ipcMain.handle('vault:load-files', async (_event, vaultPath) => {
     if (!vaultPath || typeof vaultPath !== 'string') {
       throw new Error('Invalid vault path')
     }
     const resolvedVault = path.resolve(vaultPath)
 
-    if (!fs.existsSync(resolvedVault)) {
+    try { await fs.promises.access(resolvedVault) } catch {
       throw new Error(`Vault path does not exist: ${resolvedVault}`)
     }
 
     currentVaultPath = resolvedVault
-    const { files: filePaths, folders: folderRelPaths, images: imagePaths } = collectVaultContents(resolvedVault, resolvedVault)
+    const { files: filePaths, folders: folderRelPaths, images: imagePaths } =
+      await collectVaultContents(resolvedVault, resolvedVault)
     console.log(`[vault] Found ${filePaths.length} .md files, ${folderRelPaths.length} folders, ${imagePaths.length} images (${resolvedVault})`)
 
-    const files = []
-    for (const absPath of filePaths) {
-      try {
-        const content = fs.readFileSync(absPath, 'utf-8')
-        const relativePath = path.relative(resolvedVault, absPath).replace(/\\/g, '/')
-        let mtime
-        try { mtime = fs.statSync(absPath).mtimeMs } catch { /* ignore */ }
-        files.push({ relativePath, absolutePath: absPath, content, mtime })
-      } catch (err) {
-        console.warn('[vault] Failed to read', absPath, err.message)
-      }
+    // Read files: batch parallel to prevent Windows file handle exhaustion
+    const BATCH_SIZE = 100
+    const fileResults = []
+    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
+      const batch = filePaths.slice(i, i + BATCH_SIZE)
+      const batchResults = await Promise.all(
+        batch.map(async (absPath) => {
+          try {
+            const [content, stat] = await Promise.all([
+              fs.promises.readFile(absPath, 'utf-8'),
+              fs.promises.stat(absPath).catch(() => null),
+            ])
+            const relativePath = path.relative(resolvedVault, absPath).replace(/\\/g, '/')
+            return { relativePath, absolutePath: absPath, content, mtime: stat?.mtimeMs }
+          } catch (err) {
+            console.warn('[vault] Failed to read', absPath, err.message)
+            return null
+          }
+        })
+      )
+      fileResults.push(...batchResults)
     }
+    const files = fileResults.filter(Boolean)
 
-    // Image files: return only paths in registry, not content (filename → {relativePath, absolutePath})
+    // Image files: return only paths in registry (filename -> {relativePath, absolutePath})
     const imageRegistry = {}
     for (const absPath of imagePaths) {
       const filename = path.basename(absPath)
@@ -279,6 +365,25 @@ function registerVaultIpcHandlers() {
     return { files, folders: folderRelPaths, imageRegistry }
   })
 
+  // ── vault:scan-metadata ───────────────────────────────────────────────────────
+  // Lightweight scan: returns path + mtime only (no content) for cache fingerprint
+  ipcMain.handle('vault:scan-metadata', async (_event, vaultPath) => {
+    if (!vaultPath || typeof vaultPath !== 'string') return []
+    const resolvedVault = path.resolve(vaultPath)
+    try { await fs.promises.access(resolvedVault) } catch { return [] }
+    const { files: filePaths } = await collectVaultContents(resolvedVault, resolvedVault)
+    const meta = await Promise.all(
+      filePaths.map(async (absPath) => {
+        try {
+          const stat = await fs.promises.stat(absPath)
+          const relativePath = path.relative(resolvedVault, absPath).replace(/\\/g, '/')
+          return { relativePath, absolutePath: absPath, mtime: stat.mtimeMs }
+        } catch { return null }
+      })
+    )
+    return meta.filter(Boolean)
+  })
+
   // ── vault:watch-start ────────────────────────────────────────────────────────
   let watcher = null
   let watchDebounce = null
@@ -291,15 +396,16 @@ function registerVaultIpcHandlers() {
     if (watcher) { watcher.close(); watcher = null }
 
     try {
+      let lastChangedFile = null
       watcher = fs.watch(vaultPath, { recursive: true }, (_eventType, filename) => {
         if (!filename || !filename.endsWith('.md')) return
-        // Skip internal app config directory (.rembrant/) — written by the app itself
-        // (e.g. personas.md saved by usePersonaVaultSaver). These are not user vault edits.
-        if (filename.replace(/\\/g, '/').startsWith('.rembrant/')) return
+        // Skip internal app config directory — written by the app itself
+        if (filename.replace(/\\/g, '/').startsWith('.strata-sync/')) return
+        lastChangedFile = filename
         clearTimeout(watchDebounce)
         watchDebounce = setTimeout(() => {
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('vault:changed', { vaultPath })
+            mainWindow.webContents.send('vault:changed', { vaultPath, changedFile: lastChangedFile })
           }
         }, 500)
       })
@@ -317,16 +423,34 @@ function registerVaultIpcHandlers() {
     return true
   })
 
+  // ── vault:set-active-path ────────────────────────────────────────────────────
+  // Pre-update currentVaultPath when loadVaultCached skips vault:load-files
+  ipcMain.handle('vault:set-active-path', (_event, vaultPath) => {
+    if (!vaultPath || typeof vaultPath !== 'string') return false
+    const resolved = path.resolve(vaultPath)
+    try { fs.accessSync(resolved) } catch { return false }
+    currentVaultPath = resolved
+    return true
+  })
+
   // ── vault:save-file ──────────────────────────────────────────────────────────
   ipcMain.handle('vault:save-file', (_event, filePath, content) => {
     if (!filePath || typeof filePath !== 'string') throw new Error('Invalid file path')
     if (typeof content !== 'string') throw new Error('Invalid content')
     const resolved = path.resolve(filePath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) {
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) {
       throw new Error(`Security error: cannot write to path outside vault (${resolved})`)
     }
     fs.mkdirSync(path.dirname(resolved), { recursive: true })
-    fs.writeFileSync(resolved, content, 'utf-8')
+    // Atomic write: write to temp file then rename to prevent data loss on crash
+    const tmp = resolved + '.~tmp'
+    try {
+      fs.writeFileSync(tmp, content, 'utf-8')
+      fs.renameSync(tmp, resolved)
+    } catch (e) {
+      try { fs.unlinkSync(tmp) } catch {}
+      throw e
+    }
     return { success: true, path: resolved }
   })
 
@@ -335,7 +459,7 @@ function registerVaultIpcHandlers() {
     if (!absolutePath || typeof absolutePath !== 'string') throw new Error('Invalid path')
     if (!newFilename || typeof newFilename !== 'string') throw new Error('Invalid filename')
     const resolved = path.resolve(absolutePath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) {
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) {
       throw new Error(`Security error: cannot rename file outside vault (${resolved})`)
     }
     if (!fs.existsSync(resolved)) throw new Error(`File does not exist: ${resolved}`)
@@ -352,7 +476,7 @@ function registerVaultIpcHandlers() {
   ipcMain.handle('vault:delete-file', (_event, absolutePath) => {
     if (!absolutePath || typeof absolutePath !== 'string') throw new Error('Invalid path')
     const resolved = path.resolve(absolutePath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) {
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) {
       throw new Error(`Security error: cannot delete file outside vault (${resolved})`)
     }
     if (!fs.existsSync(resolved)) throw new Error(`File does not exist: ${resolved}`)
@@ -364,8 +488,8 @@ function registerVaultIpcHandlers() {
   ipcMain.handle('vault:read-file', (_event, filePath) => {
     if (!filePath || typeof filePath !== 'string') return null
     const resolved = path.resolve(filePath)
-    // Security: reject reads outside the current vault
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) return null
+    // Security: reject reads outside the current vault (or when no vault is loaded)
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) return null
     if (!fs.existsSync(resolved)) return null
     return fs.readFileSync(resolved, 'utf-8')
   })
@@ -374,7 +498,7 @@ function registerVaultIpcHandlers() {
   ipcMain.handle('vault:read-image', (_event, filePath) => {
     if (!filePath || typeof filePath !== 'string') return null
     const resolved = path.resolve(filePath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) return null
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) return null
     if (!fs.existsSync(resolved)) return null
     return readImageAsDataUrl(resolved)
   })
@@ -393,7 +517,7 @@ function registerVaultIpcHandlers() {
   ipcMain.handle('vault:create-folder', (_event, folderPath) => {
     if (!folderPath || typeof folderPath !== 'string') throw new Error('Invalid folder path')
     const resolved = path.resolve(folderPath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolved)) {
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolved)) {
       throw new Error(`Security error: cannot create folder outside vault (${resolved})`)
     }
     fs.mkdirSync(resolved, { recursive: true })
@@ -406,14 +530,12 @@ function registerVaultIpcHandlers() {
     if (!destFolderPath || typeof destFolderPath !== 'string') throw new Error('Invalid destination folder')
     const resolvedSrc = path.resolve(absolutePath)
     const resolvedDest = path.resolve(destFolderPath)
-    if (currentVaultPath && !isInsideVault(currentVaultPath, resolvedSrc)) {
+    if (!currentVaultPath || !isInsideVault(currentVaultPath, resolvedSrc)) {
       throw new Error(`Security error: cannot move file outside vault (${resolvedSrc})`)
     }
-    if (currentVaultPath) {
-      const isVaultRoot = resolvedDest === path.resolve(currentVaultPath)
-      if (!isVaultRoot && !isInsideVault(currentVaultPath, resolvedDest)) {
-        throw new Error(`Security error: cannot move file to a location outside vault (${resolvedDest})`)
-      }
+    const isVaultRoot = resolvedDest === path.resolve(currentVaultPath)
+    if (!isVaultRoot && !isInsideVault(currentVaultPath, resolvedDest)) {
+      throw new Error(`Security error: cannot move file to a location outside vault (${resolvedDest})`)
     }
     if (!fs.existsSync(resolvedSrc)) throw new Error(`File does not exist: ${resolvedSrc}`)
     fs.mkdirSync(resolvedDest, { recursive: true })
@@ -443,23 +565,87 @@ function registerWindowIpcHandlers() {
 
 ipcMain.handle('tools:read-app-file', (_event, relativePath) => {
   if (!relativePath || typeof relativePath !== 'string') return null
-  // Reject absolute paths and traversal sequences
+  // Reject absolute paths and traversal sequences before resolving
   if (path.isAbsolute(relativePath) || relativePath.includes('..')) return null
   const appRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..')
   const filePath = path.resolve(path.join(appRoot, relativePath))
-  if (!filePath.startsWith(path.resolve(appRoot))) return null
+  // Use path.relative to check boundary (avoids .startsWith prefix collision e.g. /approot-extra)
+  const rel = path.relative(path.resolve(appRoot), filePath)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null
   if (!fs.existsSync(filePath)) return null
   return fs.readFileSync(filePath, 'utf-8')
+})
+
+// ── PDF Report export ─────────────────────────────────────────────────────────
+
+ipcMain.handle('report:export-pdf', async (_event, html, suggestedName) => {
+  // Choose save path
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Save Report',
+    defaultPath: suggestedName || 'chat-report.pdf',
+    filters: [{ name: 'PDF File', extensions: ['pdf'] }],
+  })
+  if (canceled || !filePath) return { ok: false, reason: 'canceled' }
+
+  // Load HTML in a hidden BrowserWindow and print to PDF
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true },
+  })
+
+  await new Promise((resolve) => {
+    win.webContents.once('did-finish-load', resolve)
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+  })
+
+  try {
+    const pdfData = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'default' },
+    })
+    fs.writeFileSync(filePath, pdfData)
+    shell.showItemInFolder(filePath)
+    return { ok: true, filePath }
+  } catch (err) {
+    return { ok: false, reason: String(err) }
+  } finally {
+    win.destroy()
+  }
+})
+
+// ── Web search IPC (DuckDuckGo HTML, no API key) ──────────────────────────────
+
+ipcMain.handle('web:search', async (_event, query) => {
+  const https = require('https')
+  const querystring = require('querystring')
+  return new Promise((resolve) => {
+    const params = querystring.stringify({ q: query, kl: 'us-en' })
+    const req = https.request({
+      hostname: 'html.duckduckgo.com',
+      path: '/html/',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Length': Buffer.byteLength(params),
+      },
+    }, (res) => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    })
+    req.on('error', () => resolve(''))
+    req.setTimeout(10000, () => { req.destroy(); resolve('') })
+    req.write(params)
+    req.end()
+  })
 })
 
 // ── Confluence IPC handlers ────────────────────────────────────────────────────
 
 function registerConfluenceIpcHandlers() {
-  /**
-   * Fetch all pages from a Confluence space via REST API v1.
-   * Uses Electron's net.fetch to bypass CORS.
-   * Returns raw page objects: { id, title, body.storage.value, metadata.labels, version, history }
-   */
   /**
    * Returns the REST API base path for a Confluence instance.
    * Atlassian Cloud uses /wiki/rest/api; Server/Data Center uses /rest/api.
@@ -730,9 +916,10 @@ function registerConfluenceIpcHandlers() {
       throw new Error(`Script not found: ${scriptPath}`)
     }
 
+    const safeArgs = (Array.isArray(args) ? args : []).map(String)
     return new Promise((resolve) => {
       const pyCmd = process.platform === 'win32' ? 'python' : 'python3'
-      const proc = spawn(pyCmd, [scriptPath, ...(args ?? [])], {
+      const proc = spawn(pyCmd, [scriptPath, ...safeArgs], {
         cwd: app.isPackaged ? process.resourcesPath : path.join(__dirname, '..'),
         env: { ...process.env },
       })
@@ -745,6 +932,65 @@ function registerConfluenceIpcHandlers() {
       proc.on('error', err => { if (timer) clearTimeout(timer); resolve({ stdout: '', stderr: err.message, exitCode: -1 }) })
       // Safety timeout: 60s max per script
       timer = setTimeout(() => { proc.kill(); resolve({ stdout, stderr: stderr + '\n[TIMEOUT]', exitCode: -1 }) }, 60000)
+    })
+  })
+
+  // ── tools:run-vault-tool — Run Python scripts from tools/ folder for Edit Agent ──
+  ipcMain.handle('tools:run-vault-tool', async (_event, scriptName, args) => {
+    if (!scriptName || typeof scriptName !== 'string' ||
+        scriptName.includes('/') || scriptName.includes('\\') || scriptName.includes('..')) {
+      throw new Error(`Invalid script name: ${scriptName}`)
+    }
+    const toolsDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'tools')
+      : path.join(__dirname, '..', 'tools')
+    const scriptPath = path.resolve(path.join(toolsDir, scriptName))
+    if (!scriptPath.startsWith(path.resolve(toolsDir))) {
+      throw new Error('Script path escapes tools directory')
+    }
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`Script not found: ${scriptPath}`)
+    }
+    const safeArgs = (Array.isArray(args) ? args : []).map(String)
+    return new Promise((resolve) => {
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3'
+      const proc = spawn(pyCmd, ['-X', 'utf8', scriptPath, ...safeArgs], {
+        cwd: app.isPackaged ? process.resourcesPath : path.join(__dirname, '..'),
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+      let stdout = ''
+      let stderr = ''
+      proc.stdout.on('data', d => { stdout += d.toString() })
+      proc.stderr.on('data', d => { stderr += d.toString() })
+      let timer = null
+      proc.on('close', exitCode => { if (timer) clearTimeout(timer); resolve({ stdout, stderr, exitCode }) })
+      proc.on('error', err => { if (timer) clearTimeout(timer); resolve({ stdout: '', stderr: err.message, exitCode: -1 }) })
+      timer = setTimeout(() => { proc.kill(); resolve({ stdout, stderr: stderr + '\n[TIMEOUT 120s]', exitCode: -1 }) }, 120000)
+    })
+  })
+
+  // ── gstack:execute — Headless browser binary execution ───────────────────────
+  ipcMain.handle('gstack:execute', async (_event, command, args) => {
+    const ALLOWED = new Set(['goto', 'text', 'snapshot', 'click', 'fill', 'js'])
+    if (!ALLOWED.has(command)) return { success: false, output: '', error: `Unknown command: ${command}` }
+    const safeArgs = (Array.isArray(args) ? args : []).map(String)
+    const os = require('os')
+    const gstackBin = path.join(os.homedir(), '.claude', 'skills', 'gstack', 'browse', 'dist', 'browse')
+    const gstackBinWin = gstackBin + '.exe'
+    const binPath = process.platform === 'win32' && fs.existsSync(gstackBinWin) ? gstackBinWin : gstackBin
+    if (!fs.existsSync(binPath)) {
+      return { success: false, output: '', error: `gstack binary not found: ${binPath}` }
+    }
+    return new Promise((resolve) => {
+      const proc = spawn(binPath, [command, ...safeArgs], { env: { ...process.env } })
+      let stdout = ''
+      let stderr = ''
+      proc.stdout.on('data', d => { stdout += d.toString() })
+      proc.stderr.on('data', d => { stderr += d.toString() })
+      let timer = null
+      proc.on('close', code => { if (timer) clearTimeout(timer); resolve({ success: code === 0, output: stdout, error: stderr || undefined }) })
+      proc.on('error', err => { if (timer) clearTimeout(timer); resolve({ success: false, output: '', error: err.message }) })
+      timer = setTimeout(() => { proc.kill(); resolve({ success: false, output: stdout, error: stderr + '\n[TIMEOUT 30s]' }) }, 30000)
     })
   })
 }
@@ -768,6 +1014,12 @@ function createWindow() {
     },
     autoHideMenuBar: true,
     backgroundColor: '#191919',
+    show: false,  // Show after ready-to-show event — prevents "not responding" during JS parse
+  })
+
+  // Show window after JS bundle parse and first render complete (Electron recommended pattern)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
   })
 
   // ── Security: Handle CORS for allowed API domains ──
@@ -814,8 +1066,56 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http')) shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // ── Crash recovery: renderer process gone (GPU crash, OOM, etc.) ───────────
+  let rendererCrashCount = 0
+  const CRASH_RESET_MS = 30_000  // crash count reset window: 30 seconds
+  let crashResetTimer = null
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[main] render-process-gone:', details.reason, 'exitCode:', details.exitCode)
+    if (details.reason === 'clean-exit') return
+
+    rendererCrashCount++
+    console.warn(`[main] Renderer crash count: ${rendererCrashCount}`)
+
+    // Stop auto-restart after 3 crashes within 30s to prevent infinite reload loop
+    if (rendererCrashCount >= 3) {
+      console.error('[main] Repeated crashes detected — stopping auto-restart. Please restart the app manually.')
+      return
+    }
+
+    // Reset counter after 30s
+    if (crashResetTimer) clearTimeout(crashResetTimer)
+    crashResetTimer = setTimeout(() => { rendererCrashCount = 0 }, CRASH_RESET_MS)
+
+    // Wait a moment then reload — GPU driver / OS may need time to release resources
+    const delay = details.reason === 'oom' ? 2500 : 1500
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      console.log(`[main] reloading after renderer crash (reason: ${details.reason})`)
+      const crashParam = `crashed=${encodeURIComponent(details.reason)}`
+      if (process.env.VITE_DEV_SERVER_URL) {
+        const base = process.env.VITE_DEV_SERVER_URL.replace(/\/$/, '')
+        mainWindow.loadURL(`${base}?${crashParam}`)
+      } else {
+        mainWindow.loadFile(
+          path.join(__dirname, '..', 'dist', 'index.html'),
+          { query: { crashed: details.reason } }
+        )
+      }
+    }, delay)
+  })
+
+  // ── Unresponsive renderer: log for now (could show dialog if needed) ───────
+  mainWindow.on('unresponsive', () => {
+    console.warn('[main] window became unresponsive')
+  })
+  mainWindow.on('responsive', () => {
+    console.log('[main] window responsive again')
   })
 }
 
@@ -836,19 +1136,35 @@ if (!gotTheLock) {
 const RAG_API_PORT = 7331
 const _ragResolvers = new Map()
 
+// MiroFish real-time progress — for /mirofish-progress polling
+let _mirofishProgress = { running: false, feed: [], round: 0, totalRounds: 0 }
+
+// Receive partial feed updates from the renderer
+ipcMain.on('rag:mirofish:progress', (_event, data) => {
+  if (data && typeof data === 'object') {
+    _mirofishProgress = { ...data }
+  }
+})
+
 function startRagApiServer() {
   const http = require('http')
 
   function ipcRequest(ipcChannel, payload, timeoutMs = 10000) {
     return new Promise((resolve) => {
       if (!mainWindow) { resolve(null); return }
-      const requestId = `${Date.now()}-${Math.random()}`
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+      const startMs = Date.now()
       const timer = setTimeout(() => {
         _ragResolvers.delete(requestId)
-        console.warn(`[RAG] IPC timeout after ${timeoutMs}ms for ${ipcChannel}`)
+        console.warn(`[RAG] timeout channel=${ipcChannel} req=${requestId} limit=${timeoutMs}ms`)
         resolve(null)
       }, timeoutMs)
-      _ragResolvers.set(requestId, (data) => { clearTimeout(timer); _ragResolvers.delete(requestId); resolve(data) })
+      _ragResolvers.set(requestId, (data) => {
+        clearTimeout(timer)
+        _ragResolvers.delete(requestId)
+        console.log(`[RAG] done channel=${ipcChannel} req=${requestId} elapsed=${Date.now() - startMs}ms`)
+        resolve(data)
+      })
       mainWindow.webContents.send(ipcChannel, { requestId, ...payload })
     })
   }
@@ -856,8 +1172,18 @@ function startRagApiServer() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${RAG_API_PORT}`)
     const send = (status, data) => {
+      if (res.headersSent) return
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(data))
+    }
+    // Top-level exception guard — prevent unhandled rejections in async handler
+    const _handleRequest = async () => {
+
+    // Authentication: require Bearer token on all endpoints
+    const authHeader = req.headers['authorization'] || ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+    if (token !== ragApiToken) {
+      return send(401, { error: 'unauthorized' })
     }
 
     if (url.pathname === '/settings') {
@@ -867,42 +1193,185 @@ function startRagApiServer() {
 
     if (url.pathname === '/search') {
       const query = url.searchParams.get('q') || ''
-      const topN  = Math.min(parseInt(url.searchParams.get('n') || '5'), 20)
+      const topN  = Math.min(parseInt(url.searchParams.get('n') || '5', 10), 20)
       if (!query.trim()) return send(400, { error: 'query required' })
       const results = await ipcRequest('rag:search', { query, topN }, 15000)
       return results ? send(200, results) : send(504, { error: 'timeout' })
+    }
+
+    if (url.pathname === '/images') {
+      const query = url.searchParams.get('q') || ''
+      if (!query.trim()) return send(400, { error: 'query required' })
+      const results = await ipcRequest('rag:get-images', { query }, 5000)
+      return send(200, results ?? { paths: [] })
+    }
+
+    if (url.pathname === '/mirofish') {
+      let body = {}
+      if (req.method === 'POST') {
+        try {
+          const raw = await new Promise((resolve, reject) => {
+            const chunks = []
+            let totalLen = 0
+            req.on('data', c => { totalLen += c.length; if (totalLen > 20971520) { req.destroy(); reject(new Error('body too large')); return } chunks.push(c) })
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+            req.on('error', reject)
+          })
+          try { body = JSON.parse(raw) } catch { /* ignore malformed */ }
+        } catch { return send(400, { error: 'invalid request' }) }
+      }
+      const _MIRO_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250514', 'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-4.1-mini', 'gpt-4.1', 'gpt-4o', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+      const topic   = (body.topic || '').slice(0, 2000)
+      const _np     = parseInt(body.numPersonas, 10)
+      const _nr     = parseInt(body.numRounds,   10)
+      const numPersonas = Math.min(Math.max(isNaN(_np) ? 5 : _np, 3), 50)
+      const numRounds   = Math.min(Math.max(isNaN(_nr) ? 3 : _nr, 2), 10)
+      const modelId = _MIRO_MODELS.includes(body.modelId) ? body.modelId : 'claude-haiku-4-5-20251001'
+      const context        = typeof body.context === 'string' ? body.context.slice(0, 8000) : undefined
+      const segment        = typeof body.segment === 'string' ? body.segment.slice(0, 100) : undefined
+      const presetPersonas = Array.isArray(body.presetPersonas) ? body.presetPersonas.slice(0, 50) : undefined
+      const images         = Array.isArray(body.images)
+        ? body.images.filter(i => i && typeof i.data === 'string' && typeof i.mediaType === 'string').slice(0, 5)
+        : undefined
+      if (!topic.trim()) return send(400, { error: 'topic required' })
+      const result = await ipcRequest('rag:mirofish', { topic, numPersonas, numRounds, modelId, context, segment, presetPersonas, images }, 300000)
+      return result ? send(200, result) : send(504, { error: 'timeout' })
+    }
+
+    if (url.pathname === '/mirofish-progress') {
+      // Return partial feed of the currently running simulation (for polling)
+      return send(200, _mirofishProgress)
+    }
+
+    if (url.pathname === '/mirofish-save') {
+      // Save MiroFish simulation results as a vault MD file
+      if (req.method !== 'POST') return send(405, { error: 'POST required' })
+      // If currentVaultPath is null, query the renderer directly (race condition after app start)
+      if (!currentVaultPath) {
+        const rendererVaultPath = await ipcRequest('rag:get-vault-path', {}, 5000)
+        if (rendererVaultPath && typeof rendererVaultPath === 'string') {
+          currentVaultPath = rendererVaultPath
+          console.log('[mirofish-save] currentVaultPath restored via IPC:', currentVaultPath)
+        }
+      }
+      if (!currentVaultPath) return send(503, { error: 'vault not loaded' })
+      let rawSave = ''
+      try {
+        rawSave = await new Promise((resolve, reject) => {
+          const chunks = []; let len = 0
+          req.on('data', c => { len += c.length; if (len > 2097152) { req.destroy(); reject(new Error('too large')) } chunks.push(c) })
+          req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+          req.on('error', reject)
+        })
+      } catch { return send(400, { error: 'invalid request' }) }
+      let saveBody = {}
+      try { saveBody = JSON.parse(rawSave) } catch { return send(400, { error: 'invalid json' }) }
+      const topic    = (typeof saveBody.topic    === 'string' ? saveBody.topic    : '').slice(0, 200)
+      const report   = (typeof saveBody.report   === 'string' ? saveBody.report   : '').slice(0, 50000)
+      const brief    = (typeof saveBody.brief    === 'string' ? saveBody.brief    : '').slice(0, 5000)
+      const feedArr  = Array.isArray(saveBody.feed) ? saveBody.feed.slice(0, 200) : []
+      if (!topic) return send(400, { error: 'topic required' })
+
+      const now    = new Date()
+      const dateStr = now.toISOString().slice(0, 10)
+      const timeStr = now.toTimeString().slice(0, 5).replace(':', '-')
+      const slug   = topic.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)
+      const fname  = `MiroFish_${dateStr}_${timeStr}_${slug}.md`
+      const folder = path.join(currentVaultPath, 'MiroFish')
+      const fpath  = path.join(folder, fname)
+
+      const feedMd = feedArr.map(p => {
+        const shift = p.stanceShifted ? ` 🔄${p.prevStance}→${p.stance}` : ''
+        return `> **[R${p.round}] ${p.personaName}** (${p.stance}${shift})\n> ${p.content}`
+      }).join('\n\n')
+
+      const md = [
+        `---`,
+        `title: "${topic}"`,
+        `date: ${dateStr}`,
+        `tags: [mirofish, simulation]`,
+        `---`,
+        ``,
+        `# MiroFish Simulation: ${topic}`,
+        ``,
+        brief ? `## PM Brief\n${brief}\n` : '',
+        `## Analysis Report`,
+        report,
+        ``,
+        feedMd ? `## Simulation Feed\n\n${feedMd}` : '',
+      ].filter(l => l !== undefined).join('\n')
+
+      // Path traversal defense — verify final file path is inside vault
+      if (!isInsideVault(currentVaultPath, fpath)) {
+        return send(400, { error: 'invalid filename' })
+      }
+      try {
+        fs.mkdirSync(folder, { recursive: true })
+        fs.writeFileSync(fpath, md, 'utf-8')
+        return send(200, { ok: true, path: fpath, filename: fname })
+      } catch (e) {
+        console.error('[mirofish-save] write error:', e)
+        return send(500, { error: 'internal error' })
+      }
     }
 
     if (url.pathname === '/ask') {
       // Parse POST body (may include history), fallback to GET params
       let body = {}
       if (req.method === 'POST') {
-        const raw = await new Promise((resolve, reject) => {
-          let buf = ''
-          req.on('data', chunk => { buf += chunk })
-          req.on('end', () => resolve(buf))
-          req.on('error', reject)
-        })
-        try { body = JSON.parse(raw) } catch { /* ignore malformed */ }
+        try {
+          const raw = await new Promise((resolve, reject) => {
+            const chunks = []
+            let totalLen = 0
+            const MAX_BODY = 2 * 1024 * 1024  // 2MB
+            req.on('data', chunk => {
+              totalLen += chunk.length
+              if (totalLen > MAX_BODY) { req.destroy(); reject(new Error('request body too large')); return }
+              chunks.push(chunk)
+            })
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+            req.on('error', reject)
+          })
+          try { body = JSON.parse(raw) } catch { /* ignore malformed */ }
+        } catch { return send(400, { error: 'invalid request' }) }
       }
-      const query      = body.q      || url.searchParams.get('q')      || ''
-      const directorId = body.director || url.searchParams.get('director') || 'chief_director'
-      const history    = Array.isArray(body.history) ? body.history : []
-      const images     = Array.isArray(body.images)  ? body.images  : []
-      if (!query.trim()) return send(400, { error: 'query required' })
-      // 90s timeout — Vision + RAG + LLM streaming wait when images are included
-      const timeoutMs  = images.length > 0 ? 90000 : 60000
+      const _VALID_DIRECTORS = ['chief_director', 'art_director', 'prog_director', 'plan_director']
+      const _ALLOWED_MEDIA   = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+      const query      = ((body.q || url.searchParams.get('q') || '').slice(0, 10000)).trim()
+      const directorId = _VALID_DIRECTORS.includes(body.director) ? body.director
+                       : _VALID_DIRECTORS.includes(url.searchParams.get('director')) ? url.searchParams.get('director')
+                       : 'chief_director'
+      const history = (Array.isArray(body.history) ? body.history : [])
+        .filter(m => m && typeof m === 'object' && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.length <= 8000)
+        .slice(0, 40)
+      const images = (Array.isArray(body.images) ? body.images : [])
+        .filter(m => m && typeof m === 'object' && typeof m.data === 'string' && _ALLOWED_MEDIA.includes(m.mediaType))
+        .slice(0, 5)
+      if (!query) return send(400, { error: 'query required' })
+      // Images: 150s, text-only: 120s — multi-vault sequential RAG + LLM latency
+      const timeoutMs  = images.length > 0 ? 150000 : 120000
       const result = await ipcRequest('rag:ask', { query, directorId, history, images }, timeoutMs)
       return result ? send(200, result) : send(504, { error: 'timeout' })
     }
 
-    send(404, { error: 'not found' })
+      send(404, { error: 'not found' })
+    }
+    _handleRequest().catch(err => {
+      console.error('[RAG API] unhandled error:', err)
+      send(500, { error: 'internal error' })
+    })
   })
 
   ipcMain.on('rag:result', (_event, { requestId, results }) => {
     const resolve = _ragResolvers.get(requestId)
     if (resolve) resolve(results)
   })
+
+  // Clear all pending resolvers on renderer crash (prevent memory leaks)
+  function clearRagResolvers() {
+    for (const resolve of _ragResolvers.values()) resolve(null)
+    _ragResolvers.clear()
+  }
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -915,7 +1384,16 @@ function startRagApiServer() {
   server.listen(RAG_API_PORT, '127.0.0.1', () => {
     console.log(`[RAG API] http://127.0.0.1:${RAG_API_PORT}`)
   })
+
+  app.on('browser-window-created', (_e, win) => {
+    win.webContents.on('render-process-gone', clearRagResolvers)
+    win.webContents.on('destroyed', clearRagResolvers)
+  })
 }
+
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.strata-sync.app')
+  }
 
   app.whenReady().then(() => {
     // ── strata-img:// protocol — serve vault images directly from disk ────────
@@ -933,6 +1411,12 @@ function startRagApiServer() {
         if (!absPath) {
           console.warn('[strata-img] not found:', normalizedName)
           return new Response(null, { status: 404 })
+        }
+
+        // Security: ensure resolved image is inside the current vault
+        if (!currentVaultPath || !isInsideVault(currentVaultPath, absPath)) {
+          console.warn('[strata-img] blocked: path outside vault:', absPath)
+          return new Response(null, { status: 403 })
         }
 
         // Use async read to avoid blocking the main process for large images
@@ -971,6 +1455,15 @@ function startRagApiServer() {
   })
 
   app.on('before-quit', () => {
-    // cleanup on exit
+    stopSlackBot()
   })
+
+  // ── RAG API token IPC (renderer can fetch the token for authenticated requests) ──
+  ipcMain.handle('rag:get-token', () => ragApiToken)
+
+  // ── Slack bot IPC ──────────────────────────────────────────────────────────
+  ipcMain.handle('bot:start', (_event, config) => startSlackBot(config))
+  ipcMain.handle('bot:stop',  () => { stopSlackBot(); return { ok: true } })
+  ipcMain.handle('bot:status', () => ({ running: slackBotProcess !== null }))
+  ipcMain.handle('bot:get-logs', () => [...slackBotLogBuffer])
 }

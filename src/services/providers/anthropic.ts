@@ -60,7 +60,9 @@ export async function streamCompletion(
   systemPrompt: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
   onChunk: (chunk: string) => void,
-  imageAttachments: Attachment[] = []
+  imageAttachments: Attachment[] = [],
+  onUsage?: (inputTokens: number, outputTokens: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   // Build Anthropic messages array; upgrade the last user message if images present
   const anthropicMessages: AnthropicMessage[] = messages.map((m, idx) => {
@@ -85,6 +87,7 @@ export async function streamCompletion(
       messages: anthropicMessages,
       stream: true,
     }),
+    signal,
   })
 
   if (!response.ok) {
@@ -95,14 +98,26 @@ export async function streamCompletion(
   /**
    * Anthropic streaming event types:
    * - content_block_delta: { type, index, delta: { type: 'text_delta', text: '...' } }
+   * - message_delta: { type, delta: { stop_reason }, usage: { output_tokens } }
+   * - message_start: { type, message: { usage: { input_tokens, output_tokens } } }
    * - message_stop: stream end
    */
+  let inputTokens = 0
+  let outputTokens = 0
+
   function extractChunk(data: string): string | null {
     const parsed = JSON.parse(data) as {
       type: string
       delta?: { type: string; text?: string }
+      usage?: { output_tokens?: number }
+      message?: { usage?: { input_tokens?: number; output_tokens?: number } }
     }
-    if (
+    if (parsed.type === 'message_start' && parsed.message?.usage) {
+      inputTokens = parsed.message.usage.input_tokens ?? 0
+      outputTokens = parsed.message.usage.output_tokens ?? 0
+    } else if (parsed.type === 'message_delta' && parsed.usage) {
+      outputTokens = parsed.usage.output_tokens ?? outputTokens
+    } else if (
       parsed.type === 'content_block_delta' &&
       parsed.delta?.type === 'text_delta' &&
       parsed.delta.text
@@ -114,5 +129,9 @@ export async function streamCompletion(
 
   for await (const chunk of parseSSEStream(response, extractChunk)) {
     onChunk(chunk)
+  }
+
+  if (onUsage && (inputTokens > 0 || outputTokens > 0)) {
+    onUsage(inputTokens, outputTokens)
   }
 }

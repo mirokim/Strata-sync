@@ -8,24 +8,20 @@
 import type {
   DiscussionConfig,
   DiscussionMessage,
+  DiscussionParticipantId,
   DebateCallbacks,
   ReferenceFile,
 } from '@/types'
 import { DEBATE_PROVIDER_LABELS, ROLE_OPTIONS, ROLE_DESCRIPTIONS } from './debateRoles'
 import { generateId } from '@/lib/utils'
 import { getApiKey, useSettingsStore } from '@/stores/settingsStore'
-import { getProviderForModel } from '@/lib/modelConfig'
+import { getProviderForModel, DEBATE_MODEL_IDS } from '@/lib/modelConfig'
 import type { ProviderId } from '@/lib/modelConfig'
 import type { DirectorId } from '@/types'
 
 // ── Default models per provider (fallback for non-persona participants) ───────
 
-const DEFAULT_DEBATE_MODELS: Record<string, string> = {
-  anthropic: 'claude-sonnet-4-6',
-  openai: 'gpt-4.1',
-  gemini: 'gemini-2.5-flash',
-  grok: 'grok-3',
-}
+const DEFAULT_DEBATE_MODELS = DEBATE_MODEL_IDS
 
 // ── Content block types for multimodal messages ──────────────────────────────
 
@@ -42,12 +38,12 @@ function buildSystemPrompt(
   currentProvider: string,
 ): string {
   const label = DEBATE_PROVIDER_LABELS[currentProvider] || currentProvider
-  const participantList = config.participants
-    .map((p) => DEBATE_PROVIDER_LABELS[p] || p)
+  const participantList = config.selectedProviders
+    .map((p: string) => DEBATE_PROVIDER_LABELS[p] || p)
     .join(', ')
 
-  const labelList = config.participants
-    .map((p) => `"[${DEBATE_PROVIDER_LABELS[p] || p}]:"`)
+  const labelList = config.selectedProviders
+    .map((p: string) => `"[${DEBATE_PROVIDER_LABELS[p] || p}]:"`)
     .join(', ')
 
   const base = `You are "${label}" participating in a multi-AI debate.
@@ -91,16 +87,16 @@ Accuracy and reliability principles (strictly required):
     case 'battle': {
       const isJudge = config.judgeProvider === currentProvider
       if (isJudge) {
-        const debaters = config.participants
-          .filter((p) => p !== config.judgeProvider)
-          .map((p) => DEBATE_PROVIDER_LABELS[p] || p)
+        const debaters = config.selectedProviders
+          .filter((p: string) => p !== config.judgeProvider)
+          .map((p: string) => DEBATE_PROVIDER_LABELS[p] || p)
           .join(' vs ')
         prompt = `${base}\n\nDebate format: Battle Mode (Judge)\nYou are the **Judge** of this debate. You do not participate directly.\nMatchup: ${debaters}\n\nAfter each round, evaluate using this format:\n\n📊 **Round [N] Evaluation**\n\n| Participant | Score (out of 10) | Comment |\n|-------------|-------------------|---------|\n| [AI name] | X pts | One-line comment |\n\n💬 **Judge's Comment**: Analyze the key issues and each participant's strengths and weaknesses in this round.\n🏆 **Round Winner**: [AI name]\n\nScoring criteria: Logic (3 pts), Quality of evidence (3 pts), Rebuttal strength (2 pts), Persuasiveness (2 pts)\n\nIn the final round, additionally provide:\n🏅 **Overall Winner**: [AI name]\n📝 **Overall Evaluation**: Comprehensively assess the entire debate.`
       } else {
-        const debaters = config.participants
-          .filter((p) => p !== config.judgeProvider)
-          .map((p) => DEBATE_PROVIDER_LABELS[p] || p)
-        const opponents = debaters.filter((n) => n !== label).join(', ')
+        const debaters = config.selectedProviders
+          .filter((p: string) => p !== config.judgeProvider)
+          .map((p: string) => DEBATE_PROVIDER_LABELS[p] || p)
+        const opponents = debaters.filter((n: string) => n !== label).join(', ')
         const judgeName = config.judgeProvider
           ? (DEBATE_PROVIDER_LABELS[config.judgeProvider] || config.judgeProvider)
           : 'Judge'
@@ -242,14 +238,14 @@ async function doPacing(
 ): Promise<boolean> {
   if (signal.aborted) return false
 
-  if (config.pacing.mode === 'manual') {
+  if (config.pacingMode === 'manual') {
     callbacks.onCountdownTick(-1)
     await callbacks.waitForNextTurn()
     if (signal.aborted) return false
     if (callbacks.getStatus() !== 'running') return false
     callbacks.onCountdownTick(0)
   } else {
-    const totalSeconds = config.pacing.autoDelaySeconds
+    const totalSeconds = config.autoDelay
     for (let s = totalSeconds; s > 0; s--) {
       if (signal.aborted) return false
       while (callbacks.getStatus() === 'paused') {
@@ -380,8 +376,8 @@ export async function runDebate(
 
   const isBattleMode = config.mode === 'battle' && !!config.judgeProvider
   const turnParticipants = isBattleMode
-    ? config.participants.filter((p) => p !== config.judgeProvider)
-    : config.participants
+    ? config.selectedProviders.filter((p: string) => p !== config.judgeProvider)
+    : config.selectedProviders
 
   const getRoleName = (provider: string): string | undefined => {
     if (config.mode === 'battle' && config.judgeProvider === provider) return 'Judge'
@@ -421,7 +417,7 @@ export async function runDebate(
 
       const message: DiscussionMessage = {
         id: generateId(),
-        provider,
+        provider: provider as DiscussionParticipantId,
         content: response.content,
         round,
         timestamp: Date.now(),
@@ -472,7 +468,7 @@ export async function runDebate(
 
       const judgeMessage: DiscussionMessage = {
         id: generateId(),
-        provider: judgeProvider,
+        provider: judgeProvider as DiscussionParticipantId,
         content: judgeResponse.content,
         round,
         timestamp: Date.now(),

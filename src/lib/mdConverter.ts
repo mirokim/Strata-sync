@@ -5,7 +5,7 @@
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ConversionType = '회의록' | '보고서' | '기획서' | '기타'
+export type ConversionType = 'minutes' | 'report' | 'proposal' | 'other'
 
 export interface ConversionMeta {
   /** Document title (used as first H2 heading) */

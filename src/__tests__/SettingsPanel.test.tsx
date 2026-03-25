@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import SettingsPanel from '@/components/settings/SettingsPanel'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useUIStore } from '@/stores/uiStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { DEFAULT_PERSONA_MODELS } from '@/lib/modelConfig'
 
@@ -31,7 +32,9 @@ vi.mock('framer-motion', () => {
 function resetStore(panelOpen = false) {
   useSettingsStore.setState({
     personaModels: { ...DEFAULT_PERSONA_MODELS },
-    settingsPanelOpen: panelOpen,
+  })
+  useUIStore.setState({
+    centerTab: panelOpen ? 'settings' : 'graph',
   })
 }
 
@@ -51,13 +54,13 @@ describe('SettingsPanel', () => {
 
   // ── Visibility ─────────────────────────────────────────────────────────────
 
-  it('does not render when settingsPanelOpen is false', () => {
+  it('does not render when centerTab is not settings', () => {
     resetStore(false)
     render(<SettingsPanel />)
     expect(screen.queryByTestId('settings-panel')).not.toBeInTheDocument()
   })
 
-  it('renders when settingsPanelOpen is true', () => {
+  it('renders when centerTab is settings', () => {
     resetStore(true)
     render(<SettingsPanel />)
     expect(screen.getByTestId('settings-panel')).toBeInTheDocument()
@@ -108,8 +111,8 @@ describe('SettingsPanel', () => {
   it('clicking reset button restores defaults', () => {
     useSettingsStore.setState({
       personaModels: { ...DEFAULT_PERSONA_MODELS, chief_director: 'gpt-4o' },
-      settingsPanelOpen: true,
     })
+    useUIStore.setState({ centerTab: 'settings' })
     render(<SettingsPanel />)
 
     fireEvent.click(screen.getByTestId('settings-reset'))
@@ -118,25 +121,25 @@ describe('SettingsPanel', () => {
     expect(personaModels.chief_director).toBe(DEFAULT_PERSONA_MODELS.chief_director)
   })
 
-  it('clicking close button sets settingsPanelOpen to false', () => {
+  it('clicking close button sets centerTab away from settings', () => {
     resetStore(true)
     render(<SettingsPanel />)
     fireEvent.click(screen.getByTestId('settings-close'))
-    expect(useSettingsStore.getState().settingsPanelOpen).toBe(false)
+    expect(useUIStore.getState().centerTab).not.toBe('settings')
   })
 
   it('clicking save button closes the panel', () => {
     resetStore(true)
     render(<SettingsPanel />)
     fireEvent.click(screen.getByTestId('settings-save'))
-    expect(useSettingsStore.getState().settingsPanelOpen).toBe(false)
+    expect(useUIStore.getState().centerTab).not.toBe('settings')
   })
 
   it('clicking backdrop closes the panel', () => {
     resetStore(true)
     render(<SettingsPanel />)
     fireEvent.click(screen.getByTestId('settings-backdrop'))
-    expect(useSettingsStore.getState().settingsPanelOpen).toBe(false)
+    expect(useUIStore.getState().centerTab).not.toBe('settings')
   })
 
   // ── Content ────────────────────────────────────────────────────────────────
@@ -144,7 +147,8 @@ describe('SettingsPanel', () => {
   it('shows all 5 speaker labels', () => {
     resetStore(true)
     render(<SettingsPanel />)
-    expect(screen.getByText('Chief')).toBeInTheDocument()
+    // Labels from SPEAKER_CONFIG: STRATA BOT, Art, Design, Level, Tech
+    expect(screen.getByText('STRATA BOT')).toBeInTheDocument()
     expect(screen.getByText('Art')).toBeInTheDocument()
     expect(screen.getByText('Design')).toBeInTheDocument()
     expect(screen.getByText('Level')).toBeInTheDocument()

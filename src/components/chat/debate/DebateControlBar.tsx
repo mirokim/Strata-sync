@@ -72,7 +72,7 @@ export function DebateControlBar() {
         {/* Provider dots */}
         {config && (
           <div className="flex items-center gap-1">
-            {config.participants.map((p: string) => {
+            {config.selectedProviders.map((p: string) => {
               const isJudge = config.mode === 'battle' && config.judgeProvider === p
               return (
                 <div

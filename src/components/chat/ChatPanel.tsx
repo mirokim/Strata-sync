@@ -1,26 +1,24 @@
 import { useState } from 'react'
 import { FileText } from 'lucide-react'
 import MessageList from './MessageList'
-import QuickQuestions from './QuickQuestions'
 import ChatInput from './ChatInput'
 import { useDebateStore } from '@/stores/debateStore'
 import { DebateSetup } from './debate/DebateSetup'
 import { DebateControlBar } from './debate/DebateControlBar'
 import { DebateThread } from './debate/DebateThread'
 import { DebateUserInput } from './debate/DebateUserInput'
-import { useSettingsStore } from '@/stores/settingsStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useUIStore } from '@/stores/uiStore'
 
 export default function ChatPanel() {
   const [debateMode, setDebateMode] = useState(false)
   const debateStatus = useDebateStore((s) => s.status)
-  const { setSettingsPanelOpen } = useSettingsStore()
   const messages = useChatStore((s) => s.messages)
-  const { openInEditor } = useUIStore()
+  const { openInEditor, setCenterTab } = useUIStore()
 
+  // Open the settings panel (driven by centerTab in uiStore)
   const openDebateSettings = () => {
-    setSettingsPanelOpen(true)
+    setCenterTab('settings')
   }
 
   return (
@@ -86,13 +84,6 @@ export default function ChatPanel() {
       ) : (
         <>
           <MessageList />
-
-          <div
-            className="shrink-0 px-4 py-2"
-            style={{ borderTop: '1px solid var(--color-border)' }}
-          >
-            <QuickQuestions />
-          </div>
 
           <ChatInput debateMode={debateMode} onToggleDebate={() => setDebateMode(v => !v)} />
         </>

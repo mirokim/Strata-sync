@@ -1,9 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 // ── electronAPI ────────────────────────────────────────────────────────────────
+// Whitelist of allowed IPC send channels (renderer → main, one-way)
+const _ALLOWED_IPC_SEND = new Set(['rag:mirofish:progress'])
+
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
   platform: process.platform,
+  /** Send a one-way IPC message to main process — only whitelisted channels allowed */
+  ipcSend: (channel, data) => {
+    if (!_ALLOWED_IPC_SEND.has(channel)) {
+      console.warn('[preload] ipcSend: blocked channel:', channel)
+      return
+    }
+    ipcRenderer.send(channel, data)
+  },
 })
 
 // ── windowAPI (Fix 0) — frameless window controls ─────────────────────────────
@@ -22,6 +33,9 @@ contextBridge.exposeInMainWorld('vaultAPI', {
   /** Load all .md files from the given absolute vault path */
   loadFiles: (dirPath) => ipcRenderer.invoke('vault:load-files', dirPath),
 
+  /** Lightweight metadata scan (path + mtime only, no content) for docs cache fingerprint */
+  scanMetadata: (dirPath) => ipcRenderer.invoke('vault:scan-metadata', dirPath),
+
   /** Start watching the vault directory for changes (debounced 500ms) */
   watchStart: (dirPath) => ipcRenderer.invoke('vault:watch-start', dirPath),
 
@@ -30,6 +44,9 @@ contextBridge.exposeInMainWorld('vaultAPI', {
 
   /** Save a file to the filesystem (used by MD converter and editor) */
   saveFile: (filePath, content) => ipcRenderer.invoke('vault:save-file', filePath, content),
+
+  /** Pre-update currentVaultPath when switching vaults (security check for vault:save-file) */
+  setActivePath: (vaultPath) => ipcRenderer.invoke('vault:set-active-path', vaultPath),
 
   /** Rename a file — newFilename is just the filename (no path) */
   renameFile: (absolutePath, newFilename) =>
@@ -91,9 +108,10 @@ contextBridge.exposeInMainWorld('confluenceAPI', {
     ipcRenderer.invoke('tools:read-app-file', relativePath),
 })
 
-
 // ── ragAPI (Slack RAG bridge) ─────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('ragAPI', {
+  /** Get the RAG API authentication token (for authorized HTTP requests). */
+  getToken: () => ipcRenderer.invoke('rag:get-token'),
   /** Listen for search requests from the HTTP server (via main process). */
   onSearch: (callback) => {
     const listener = (_event, data) => callback(data)
@@ -112,8 +130,77 @@ contextBridge.exposeInMainWorld('ragAPI', {
     ipcRenderer.on('rag:ask', listener)
     return () => ipcRenderer.removeListener('rag:ask', listener)
   },
+  /** Listen for image search requests (Slack /images endpoint). */
+  onGetImages: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('rag:get-images', listener)
+    return () => ipcRenderer.removeListener('rag:get-images', listener)
+  },
+  /** Listen for MiroFish simulation requests (Slack /mirofish endpoint). */
+  onMirofish: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('rag:mirofish', listener)
+    return () => ipcRenderer.removeListener('rag:mirofish', listener)
+  },
+  /** Listen for vault path requests (Slack /mirofish-save fallback). */
+  onGetVaultPath: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('rag:get-vault-path', listener)
+    return () => ipcRenderer.removeListener('rag:get-vault-path', listener)
+  },
   /** Send results/settings back to the HTTP server (via main process). */
   sendResult: (requestId, results) => {
-    ipcRenderer.send('rag:result', { requestId, results })
+    try {
+      ipcRenderer.send('rag:result', { requestId, results })
+    } catch (err) {
+      // Structured clone failure (BigInt, circular refs, etc.) — fallback: send empty result
+      console.error('[preload] sendResult serialization failed:', err)
+      ipcRenderer.send('rag:result', { requestId, results: [] })
+    }
   },
+})
+
+// ── botAPI (Slack bot process management) ──────────────────────────────────────
+contextBridge.exposeInMainWorld('botAPI', {
+  start:     (config) => ipcRenderer.invoke('bot:start', config),
+  stop:      ()       => ipcRenderer.invoke('bot:stop'),
+  getStatus: ()       => ipcRenderer.invoke('bot:status'),
+  getLogs:   ()       => ipcRenderer.invoke('bot:get-logs'),
+  onLog: (callback) => {
+    const listener = (_event, line) => callback(line)
+    ipcRenderer.on('bot:log', listener)
+    return () => ipcRenderer.removeListener('bot:log', listener)
+  },
+  onStopped: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('bot:stopped', listener)
+    return () => ipcRenderer.removeListener('bot:stopped', listener)
+  },
+})
+
+// ── reportAPI (PDF report export) ─────────────────────────────────────────────
+contextBridge.exposeInMainWorld('reportAPI', {
+  /** Convert HTML string to PDF and export via save dialog */
+  exportPdf: (html, suggestedName) =>
+    ipcRenderer.invoke('report:export-pdf', html, suggestedName),
+})
+
+// ── webSearchAPI (DuckDuckGo via IPC) ─────────────────────────────────────────
+contextBridge.exposeInMainWorld('webSearchAPI', {
+  /** DuckDuckGo HTML search — returns result HTML string */
+  search: (query) => ipcRenderer.invoke('web:search', query),
+})
+
+// ── toolsAPI — Run Python scripts from tools/ folder for Edit Agent ───────────
+contextBridge.exposeInMainWorld('toolsAPI', {
+  /** Run a Python script from tools/ folder. Returns { stdout, stderr, exitCode }. */
+  runVaultTool: (scriptName, args) =>
+    ipcRenderer.invoke('tools:run-vault-tool', scriptName, args),
+})
+
+// ── gstackAPI — Headless browser automation ──────────────────────────────────
+contextBridge.exposeInMainWorld('gstackAPI', {
+  /** Execute a gstack browser command. Returns { success, output, error? }. */
+  execute: (command, args) =>
+    ipcRenderer.invoke('gstack:execute', command, args),
 })

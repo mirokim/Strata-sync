@@ -1,4 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// Mock pprWorkerClient to avoid Worker instantiation in test env.
+// Returns realistic PPR scores for the mock documents so buildDeepGraphContext
+// can proceed past the "sorted.length === 0" early return.
+vi.mock('@/lib/pprWorkerClient', () => ({
+  runPPRInWorker: vi.fn().mockResolvedValue(
+    new Map<string, number>([
+      ['design_doc', 0.45],
+      ['art_doc', 0.35],
+      ['plan_doc', 0.20],
+    ])
+  ),
+}))
+
 import type { SearchResult, GraphLink, LoadedDocument } from '@/types'
 import { useGraphStore } from '@/stores/graphStore'
 import { useVaultStore } from '@/stores/vaultStore'
@@ -171,7 +185,20 @@ describe('expandWithGraphNeighbors', () => {
         s.id === 'art_doc_visual' ? { ...s, body: longBody } : s
       ),
     }))
-    useVaultStore.setState({ loadedDocuments: docs })
+    // Add a dummy doc to change the array length, which invalidates the internal
+    // getCachedMaps cache (keyed by array length + first/mid/last IDs).
+    const dummyDoc: LoadedDocument = {
+      id: 'dummy_cache_buster',
+      filename: 'dummy.md',
+      folderPath: '',
+      speaker: 'unknown',
+      date: '',
+      tags: [],
+      links: [],
+      rawContent: '',
+      sections: [],
+    }
+    useVaultStore.setState({ loadedDocuments: [...docs, dummyDoc] })
 
     const results = [makeSearchResult()]
     const neighbors = expandWithGraphNeighbors(results)
@@ -470,36 +497,36 @@ describe('buildDeepGraphContext', () => {
     useVaultStore.setState({ loadedDocuments: MOCK_DOCS })
   })
 
-  it('returns empty string when no documents are loaded', () => {
+  it('returns empty string when no documents are loaded', async () => {
     useVaultStore.setState({ loadedDocuments: null })
-    expect(buildDeepGraphContext([makeSearchResult()])).toBe('')
+    expect(await buildDeepGraphContext([makeSearchResult()])).toBe('')
   })
 
-  it('uses direct-search fallback format when no graph links exist', () => {
+  it('uses direct-search fallback format when no graph links exist', async () => {
     useGraphStore.setState({ links: [] })
-    const result = buildDeepGraphContext([makeSearchResult()])
+    const result = await buildDeepGraphContext([makeSearchResult()])
     expect(result).toContain('## Related Documents (Direct Search)')
     expect(result).toContain('[Document] design')
   })
 
-  it('returns empty string when results are empty and links exist but no seeds', () => {
+  it('returns empty string when results are empty and links exist but no seeds', async () => {
     useGraphStore.setState({ links: [] })
-    const result = buildDeepGraphContext([])
+    const result = await buildDeepGraphContext([])
     expect(result).toBe('')
   })
 
-  it('returns graph-traversal format when links exist', () => {
-    const result = buildDeepGraphContext([makeSearchResult()])
-    expect(result).toContain('## Related Documents (Graph Traversal)')
+  it('returns graph-traversal format when links exist', async () => {
+    const result = await buildDeepGraphContext([makeSearchResult()])
+    expect(result).toContain('## Related Documents (PPR Traversal)')
   })
 
-  it('includes structure header with cluster info', () => {
-    const result = buildDeepGraphContext([makeSearchResult()])
+  it('includes structure header with cluster info', async () => {
+    const result = await buildDeepGraphContext([makeSearchResult()])
     expect(result).toContain('## Project Structure Overview')
   })
 
-  it('total output stays within DEEP_CONTEXT_BUDGET (16000 chars)', () => {
-    const result = buildDeepGraphContext([makeSearchResult()], 3, 20)
+  it('total output stays within DEEP_CONTEXT_BUDGET (16000 chars)', async () => {
+    const result = await buildDeepGraphContext([makeSearchResult()], 3, 20)
     expect(result.length).toBeLessThanOrEqual(16_500)
   })
 })

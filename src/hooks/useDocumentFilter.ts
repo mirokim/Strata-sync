@@ -9,13 +9,12 @@
  */
 
 import { useState, useMemo } from 'react'
-import type { SpeakerId } from '@/types'
-import type { MockDocument, LoadedDocument } from '@/types'
+import type { SpeakerId, LoadedDocument } from '@/types'
 import { MOCK_DOCUMENTS } from '@/data/mockDocuments'
 import { useVaultStore } from '@/stores/vaultStore'
 import { SPEAKER_IDS } from '@/lib/speakerConfig'
 
-type AnyDoc = MockDocument  // LoadedDocument is structurally compatible
+type AnyDoc = LoadedDocument
 
 export type SortBy = 'name' | 'date'
 export type SortDir = 'asc' | 'desc'
@@ -36,9 +35,8 @@ function sortDocs(docs: AnyDoc[], sortBy: SortBy, sortDir: SortDir): AnyDoc[] {
     if (sortBy === 'name') {
       cmp = a.filename.localeCompare(b.filename, undefined, { numeric: true })
     } else {
-      // Sort by mtime (LoadedDocument) or date string (MockDocument)
-      const aTime = (a as LoadedDocument).mtime ?? new Date(a.date || 0).getTime()
-      const bTime = (b as LoadedDocument).mtime ?? new Date(b.date || 0).getTime()
+      const aTime = a.mtime ?? new Date(a.date || 0).getTime()
+      const bTime = b.mtime ?? new Date(b.date || 0).getTime()
       cmp = aTime - bTime
     }
     return sortDir === 'asc' ? cmp : -cmp
@@ -54,7 +52,7 @@ export function useDocumentFilter() {
   const isVaultLoaded = Boolean(vaultPath && loadedDocuments)
 
   // Mock fallback: if no vault is loaded, use MOCK_DOCUMENTS
-  const allDocuments = (vaultPath && loadedDocuments) ? loadedDocuments as AnyDoc[] : MOCK_DOCUMENTS
+  const allDocuments: AnyDoc[] = (vaultPath && loadedDocuments) ? loadedDocuments : MOCK_DOCUMENTS
 
   const filtered = useMemo(() => {
     if (!search.trim()) return allDocuments
@@ -72,7 +70,8 @@ export function useDocumentFilter() {
     for (const id of SPEAKER_IDS) {
       map[id] = sortDocs(filtered.filter(d => d.speaker === id), sortBy, sortDir)
     }
-    const unknownDocs = filtered.filter(d => d.speaker === 'unknown')
+    const knownIds = new Set<string>(SPEAKER_IDS)
+    const unknownDocs = filtered.filter(d => d.speaker === 'unknown' || !knownIds.has(d.speaker))
     if (unknownDocs.length > 0) {
       map['unknown' as SpeakerId] = sortDocs(unknownDocs, sortBy, sortDir)
     }
@@ -85,7 +84,7 @@ export function useDocumentFilter() {
 
     const map = new Map<string, AnyDoc[]>()
     for (const doc of filtered) {
-      const folder = (doc as LoadedDocument).folderPath ?? ''
+      const folder = doc.folderPath ?? ''
       if (!map.has(folder)) map.set(folder, [])
       map.get(folder)!.push(doc)
     }

@@ -1,23 +1,27 @@
-import { useState, useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import TopBar from './TopBar'
 import ResizeHandle from './ResizeHandle'
 import FileTree from '@/components/fileTree/FileTree'
 import GraphPanel from '@/components/graph/GraphPanel'
-import ChatPanel from '@/components/chat/ChatPanel'
+import RightPanel from './RightPanel'
 import SettingsPanel from '@/components/settings/SettingsPanel'
 import ConverterEditor from '@/components/converter/ConverterEditor'
 import MarkdownEditor from '@/components/editor/MarkdownEditor'
 import ImageViewer from '@/components/editor/ImageViewer'
 import ReportViewer from '@/components/editor/ReportViewer'
 import PhysicsControls from '@/components/graph/PhysicsControls'
-import { useUIStore } from '@/stores/uiStore'
+import StatusBar from './StatusBar'
+import ToastContainer from '@/components/shared/ToastContainer'
+import CommandPalette from '@/components/shared/CommandPalette'
+import ErrorBoundary from '@/components/shared/ErrorBoundary'
+import { useUIStore, RIGHT_PANEL_AGENT_MIN } from '@/stores/uiStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 
 const LEFT_MIN = 140
 const LEFT_MAX = 340
 const RIGHT_MIN = 300
-const RIGHT_MAX = 600
+const RIGHT_MAX = 1000
 
 const PANEL_SPRING = { type: 'spring', stiffness: 80, damping: 18, delay: 0.15 } as const
 const OVERLAY_TRANSITION = { duration: 0.2 }
@@ -25,39 +29,40 @@ const COLLAPSE_TRANSITION = { type: 'spring', stiffness: 300, damping: 30 } as c
 const NO_TRANSITION = { duration: 0 } as const
 
 export default function MainLayout() {
-  const { centerTab, editingDocId, leftPanelCollapsed, rightPanelCollapsed } = useUIStore()
+  const {
+    centerTab, editingDocId, leftPanelCollapsed, rightPanelCollapsed,
+    editAgentPanelVisible,
+    leftPanelWidth: leftWidth, rightPanelWidth: rightWidth,
+    setLeftPanelWidth, setRightPanelWidth,
+  } = useUIStore()
   const isFast = useSettingsStore(s => s.paragraphRenderQuality === 'fast')
 
   const panelTransition   = isFast ? NO_TRANSITION : PANEL_SPRING
   const overlayTransition = isFast ? NO_TRANSITION : OVERLAY_TRANSITION
   const collapseTransition = isFast ? NO_TRANSITION : COLLAPSE_TRANSITION
 
-  // In fast mode: solid background (no blur compositing). Normal mode: frosted glass.
-  const glassPanelStyle = isFast
-    ? {
-        background: 'var(--color-bg-secondary)',
-        borderRadius: 10,
-        overflow: 'hidden' as const,
-        border: '1px solid var(--color-border)',
-      }
-    : {
-        background: 'var(--color-bg-overlay)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        borderRadius: 10,
-        overflow: 'hidden' as const,
-        border: '1px solid rgba(255,255,255,0.04)',
-      }
-  const [leftWidth, setLeftWidth] = useState(250)
-  const [rightWidth, setRightWidth] = useState(500)
+  const solidPanel = {
+    background: 'var(--color-bg-secondary)',
+    overflow: 'hidden' as const,
+  }
+
+  // Auto-expand right panel when edit agent opens, if currently too narrow
+  useEffect(() => {
+    if (editAgentPanelVisible) {
+      const w = useUIStore.getState().rightPanelWidth
+      if (w < RIGHT_PANEL_AGENT_MIN) setRightPanelWidth(RIGHT_PANEL_AGENT_MIN)
+    }
+  }, [editAgentPanelVisible, setRightPanelWidth])
 
   const handleLeftResize = useCallback((delta: number) => {
-    setLeftWidth(w => Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + delta)))
-  }, [])
+    const w = useUIStore.getState().leftPanelWidth
+    setLeftPanelWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + delta)))
+  }, [setLeftPanelWidth])
 
   const handleRightResize = useCallback((delta: number) => {
-    setRightWidth(w => Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, w - delta)))
-  }, [])
+    const w = useUIStore.getState().rightPanelWidth
+    setRightPanelWidth(Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, w - delta)))
+  }, [setRightPanelWidth])
 
   return (
     <div
@@ -69,12 +74,21 @@ export default function MainLayout() {
         overflow: 'hidden',
       }}
     >
-      {/* ── Graph — fills full viewport as persistent background ── */}
+      {/* Graph — fills full viewport as persistent background */}
       <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
-        <GraphPanel />
+        <ErrorBoundary fallback={
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '100%', color: 'var(--color-text-muted)', fontSize: '0.875rem',
+          }}>
+            Graph rendering failed. Click to retry.
+          </div>
+        }>
+          <GraphPanel />
+        </ErrorBoundary>
       </div>
 
-      {/* ── Floating UI shell — pointer-events:none so clicks fall through to graph ── */}
+      {/* Floating UI shell — pointer-events:none so clicks fall through to graph */}
       <div
         style={{
           position: 'absolute',
@@ -85,16 +99,16 @@ export default function MainLayout() {
           pointerEvents: 'none',
         }}
       >
-        {/* TopBar float */}
+        {/* TopBar — flush top, full width */}
         <motion.div
-          initial={isFast ? false : { y: -60, opacity: 0 }}
+          initial={isFast ? false : { y: -40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={panelTransition}
           style={{
-            margin: '12px 12px 0',
             flexShrink: 0,
             pointerEvents: 'auto',
-            ...glassPanelStyle,
+            ...solidPanel,
+            borderBottom: '1px solid var(--color-border)',
           }}
         >
           <TopBar />
@@ -114,35 +128,28 @@ export default function MainLayout() {
             transition={leftPanelCollapsed ? collapseTransition : panelTransition}
             style={{
               minWidth: leftPanelCollapsed ? 0 : leftWidth,
-              margin: leftPanelCollapsed ? '0' : '8px 0 12px 12px',
               flexShrink: 0,
               display: 'flex',
               flexDirection: 'column',
               pointerEvents: leftPanelCollapsed ? 'none' : 'auto',
-              ...glassPanelStyle,
+              ...solidPanel,
+              borderRight: '1px solid var(--color-border)',
             }}
           >
             <FileTree />
           </motion.div>
 
-          {/* Left resize handle — hidden when collapsed */}
+          {/* Left resize handle */}
           {!leftPanelCollapsed && (
-            <div style={{ pointerEvents: 'auto', flexShrink: 0 }}>
+            <div style={{ pointerEvents: 'auto', flexShrink: 0, background: 'var(--color-bg-secondary)' }}>
               <ResizeHandle onResize={handleLeftResize} />
             </div>
           )}
 
-          {/* Center — transparent spacer (graph shows through); overlays float here */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              position: 'relative',
-              margin: '8px 0 12px 0',
-            }}
-          >
-            {/* Physics controls — hidden in fast mode (physics is disabled) */}
-            {centerTab !== 'editor' && !isFast && (
+          {/* Center — transparent (graph shows through) */}
+          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+            {/* Physics controls */}
+            {centerTab !== 'editor' && centerTab !== 'settings' && !isFast && (
               <div
                 style={{
                   position: 'absolute',
@@ -156,10 +163,10 @@ export default function MainLayout() {
               </div>
             )}
 
-            {/* Editor overlay: Markdown editor (from file tree) or Converter (from toolbar) */}
-            {centerTab === 'editor' && (
+            {/* Editor / Settings overlay */}
+            {(centerTab === 'editor' || centerTab === 'settings') && (
               <motion.div
-                key={editingDocId ?? 'converter'}
+                key={centerTab === 'settings' ? 'settings' : (editingDocId ?? 'converter')}
                 initial={isFast ? false : { opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={overlayTransition}
@@ -169,29 +176,31 @@ export default function MainLayout() {
                   display: 'flex',
                   flexDirection: 'column',
                   pointerEvents: 'auto',
-                  ...glassPanelStyle,
+                  ...solidPanel,
                 }}
               >
-                {editingDocId?.startsWith('gallery:')
-                  ? <ImageViewer />
-                  : editingDocId?.startsWith('report:')
-                    ? <ReportViewer />
-                    : editingDocId
-                      ? <MarkdownEditor />
-                      : <ConverterEditor />
+                {centerTab === 'settings'
+                  ? <SettingsPanel />
+                  : editingDocId?.startsWith('gallery:')
+                    ? <ImageViewer />
+                    : editingDocId?.startsWith('report:')
+                      ? <ReportViewer />
+                      : editingDocId
+                        ? <MarkdownEditor />
+                        : <ConverterEditor />
                 }
               </motion.div>
             )}
           </div>
 
-          {/* Right resize handle — hidden when collapsed */}
+          {/* Right resize handle */}
           {!rightPanelCollapsed && (
-            <div style={{ pointerEvents: 'auto', flexShrink: 0 }}>
+            <div style={{ pointerEvents: 'auto', flexShrink: 0, background: 'var(--color-bg-secondary)' }}>
               <ResizeHandle onResize={handleRightResize} />
             </div>
           )}
 
-          {/* Right panel — Chat */}
+          {/* Right panel — Chat + EditAgent */}
           <motion.div
             initial={isFast ? false : { x: rightWidth, opacity: 0 }}
             animate={{
@@ -202,21 +211,27 @@ export default function MainLayout() {
             transition={rightPanelCollapsed ? collapseTransition : panelTransition}
             style={{
               minWidth: rightPanelCollapsed ? 0 : rightWidth,
-              margin: rightPanelCollapsed ? '0' : '8px 12px 12px 0',
               flexShrink: 0,
               display: 'flex',
               flexDirection: 'column',
               pointerEvents: rightPanelCollapsed ? 'none' : 'auto',
-              ...glassPanelStyle,
+              ...solidPanel,
+              borderLeft: '1px solid var(--color-border)',
             }}
           >
-            <ChatPanel />
+            <RightPanel />
           </motion.div>
+        </div>
+
+        {/* StatusBar — bottom, full width */}
+        <div style={{ flexShrink: 0, pointerEvents: 'auto' }}>
+          <StatusBar />
         </div>
       </div>
 
-      {/* Settings panel overlay (manages its own z-index) */}
-      <SettingsPanel />
+      {/* Portals — rendered outside the pointer-events:none shell */}
+      <ToastContainer />
+      <CommandPalette />
     </div>
   )
 }
