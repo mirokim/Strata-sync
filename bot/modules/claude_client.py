@@ -67,7 +67,7 @@ class ClaudeClient:
             "아래 문서 목록에서 여러 문서에서 반복 등장하는 핵심 도메인 키워드를 찾고, "
             "각 키워드의 '허브 문서'(가장 많이 설명하는 문서)를 지정하세요.\n"
             "응답 형식: JSON 배열만 출력. 다른 텍스트 금지.\n"
-            '예시: [{"keyword":"스칼렛","hub_stem":"07. 캐릭터 _ 스칼렛_123","display":"스칼렛"}]'
+            '예시: [{"keyword":"캐릭터A","hub_stem":"07. 캐릭터 _ 캐릭터A_123","display":"캐릭터A"}]'
         )
         user = f"문서 목록:\n\n{sample_text}\n\n핵심 키워드 JSON 배열 출력:"
         raw = self.complete(system, user, max_tokens=1500)
