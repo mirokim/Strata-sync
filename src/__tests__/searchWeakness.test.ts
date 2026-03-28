@@ -358,9 +358,9 @@ describe('검색 약점 시나리오 50건 (301-350)', () => {
     expect(chk('Top-3 노든 관계도', has(r, 3, '노든'))).toBe(true)
   })
 
-  it('348 [경계] 미하일 컨셉 아트 레퍼런스 → 미하일 컨셉 레퍼런스', () => {
-    const r = S('미하일 컨셉 아트 레퍼런스'); P('미하일 컨셉 아트 레퍼런스', r)
-    expect(chk('Top-3 미하일', has(r, 3, '미하일'))).toBe(true)
+  it('348 [경계] 캐릭터E 컨셉 아트 레퍼런스 → 캐릭터E 컨셉 레퍼런스', () => {
+    const r = S('캐릭터E 컨셉 아트 레퍼런스'); P('캐릭터E 컨셉 아트 레퍼런스', r)
+    expect(chk('Top-3 캐릭터E', has(r, 3, '캐릭터E'))).toBe(true)
   })
 
   it('349 [경계⚠] 컷씬 vs 컷신 — 두 표기 모두 허용', () => {
@@ -373,12 +373,12 @@ describe('검색 약점 시나리오 50건 (301-350)', () => {
     expect(pass1 || pass2).toBe(true)
   })
 
-  it('350 [경계⚠] 보르후 스킬 컨셉 → Voice대본 vs 스킬 컨셉 자료 (중의적 검색)', () => {
-    const r = S('보르후 스킬 컨셉'); P('보르후 스킬 컨셉', r)
-    // "보르후"는 Voice대본과 스킬컨셉자료 두 파일에 있음 — 어느 쪽이 상위에 오는지 확인
-    const hasVoice = has(r, 5, '보르후')
+  it('350 [경계⚠] 캐릭터I 스킬 컨셉 → Voice대본 vs 스킬 컨셉 자료 (중의적 검색)', () => {
+    const r = S('캐릭터I 스킬 컨셉'); P('캐릭터I 스킬 컨셉', r)
+    // "캐릭터I"는 Voice대본과 스킬컨셉자료 두 파일에 있음 — 어느 쪽이 상위에 오는지 확인
+    const hasVoice = has(r, 5, '캐릭터I')
     const fileNames = r.slice(0, 5).map(h => h.fn)
-    console.log(`  보르후 관련 Top-5: ${fileNames.slice(0, 3).join(', ')}`)
-    expect(chk('Top-5에 보르후 문서', hasVoice)).toBe(true)
+    console.log(`  캐릭터I 관련 Top-5: ${fileNames.slice(0, 3).join(', ')}`)
+    expect(chk('Top-5에 캐릭터I 문서', hasVoice)).toBe(true)
   })
 })
