@@ -1,18 +1,15 @@
 import { useState } from 'react'
 import { useSettingsStore, DEFAULT_RESPONSE_INSTRUCTIONS, DEFAULT_RAG_INSTRUCTION } from '@/stores/settingsStore'
-import { MODEL_OPTIONS, type ProviderId } from '@/lib/modelConfig'
+import { MODEL_OPTIONS } from '@/lib/modelConfig'
 import { SPEAKER_CONFIG, SPEAKER_IDS } from '@/lib/speakerConfig'
-import type { DirectorId } from '@/types'
-import { GROUPED_OPTIONS, PROVIDER_LABELS } from '../settingsShared'
+import type { DirectorId, ProviderId } from '@/types'
+import { GROUPED_OPTIONS, PROVIDER_LABELS, PROVIDER_PLACEHOLDERS } from '../settingsShared'
 
 // ── Local helpers ─────────────────────────────────────────────────────────────
 
-const API_KEY_PROVIDERS: { id: ProviderId; label: string; placeholder: string }[] = [
-  { id: 'anthropic', label: 'Anthropic (Claude)',  placeholder: 'sk-ant-...' },
-  { id: 'openai',    label: 'OpenAI (GPT)',        placeholder: 'sk-...' },
-  { id: 'gemini',    label: 'Google (Gemini)',      placeholder: 'AIza...' },
-  { id: 'grok',      label: 'xAI (Grok)',          placeholder: 'xai-...' },
-]
+const API_KEY_PROVIDERS: { id: ProviderId; label: string; placeholder: string }[] = (
+  Object.keys(PROVIDER_LABELS) as ProviderId[]
+).map(id => ({ id, label: PROVIDER_LABELS[id], placeholder: PROVIDER_PLACEHOLDERS[id] }))
 
 function EnvHint({ provider }: { provider: string }) {
   const storeKey = useSettingsStore(s => s.apiKeys[provider as ProviderId])
@@ -21,7 +18,7 @@ function EnvHint({ provider }: { provider: string }) {
     <span
       className="text-[10px] ml-1 shrink-0"
       style={{ color: hasKey ? '#4caf50' : 'var(--color-text-muted)' }}
-      title={hasKey ? 'API key configured' : 'API key not configured'}
+      title={hasKey ? 'API 키 설정됨' : 'API 키 미설정'}
     >
       {hasKey ? '●' : '○'}
     </span>
@@ -31,7 +28,7 @@ function EnvHint({ provider }: { provider: string }) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AITab() {
-  const { personaModels, setPersonaModel, apiKeys, setApiKey, responseInstructions, setResponseInstructions, ragInstruction, setRagInstruction, reportModelId, setReportModelId, multiAgentRAG, setMultiAgentRAG } = useSettingsStore()
+  const { personaModels, setPersonaModel, apiKeys, setApiKey, responseInstructions, setResponseInstructions, ragInstruction, setRagInstruction, reportModelId, setReportModelId, multiAgentRAG, setMultiAgentRAG, webSearch, setWebSearch, citationMode, setCitationMode, sensitiveKeywords, setSensitiveKeywords, selfReview, setSelfReview, nAgents, setNAgents } = useSettingsStore()
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({})
 
   const toggleKeyVisibility = (id: string) =>
@@ -42,9 +39,10 @@ export default function AITab() {
 
       {/* API Keys */}
       <section>
-        <h3 className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>API Keys</h3>
+        <h3 className="text-[13px] font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>API 키</h3>
         <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
-          Enter each AI provider's API key. Keys are saved in browser local storage.
+          각 AI 제공자의 API 키를 입력하세요.{' '}
+          <span style={{ color: '#f59e0b' }}>⚠ 키는 이 기기의 로컬 스토리지에 평문 저장됩니다. 공용 컴퓨터에서는 사용 후 키를 삭제하세요.</span>
         </p>
         <div className="flex flex-col gap-2.5">
           {API_KEY_PROVIDERS.map(({ id, label, placeholder }) => {
@@ -54,8 +52,8 @@ export default function AITab() {
             return (
               <div key={id} className="flex items-center gap-2">
                 <div
-                  className="shrink-0 text-[11px] font-medium"
-                  style={{ color: 'var(--color-text-secondary)', minWidth: 120 }}
+                  className="shrink-0 text-[13px] font-medium"
+                  style={{ color: 'var(--color-text-secondary)', minWidth: 130 }}
                 >
                   {label}
                   <span
@@ -67,9 +65,9 @@ export default function AITab() {
                   <input
                     type={visibleKeys[id] ? 'text' : 'password'}
                     value={storeValue}
-                    onChange={e => setApiKey(id, e.target.value)}
-                    placeholder={hasEnv ? '(using environment variable)' : placeholder}
-                    className="w-full text-xs rounded px-2 py-1.5 pr-7 font-mono"
+                    onChange={e => setApiKey(id, e.target.value.trim())}
+                    placeholder={hasEnv ? '(환경변수 사용 중)' : placeholder}
+                    className="w-full text-[13px] rounded px-2 py-1.5 pr-7 font-mono"
                     style={{
                       background: 'var(--color-bg-surface)',
                       color: 'var(--color-text-primary)',
@@ -86,7 +84,7 @@ export default function AITab() {
                     style={{ color: 'var(--color-text-muted)' }}
                     tabIndex={-1}
                   >
-                    {visibleKeys[id] ? 'Hide' : 'Show'}
+                    {visibleKeys[id] ? '숨김' : '보기'}
                   </button>
                 </div>
               </div>
@@ -99,9 +97,9 @@ export default function AITab() {
 
       {/* Persona → model mapping */}
       <section>
-        <h3 className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Persona Models</h3>
+        <h3 className="text-[13px] font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>페르소나 모델</h3>
         <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
-          Select the AI model to use for each director persona. When no API key is configured, mock responses are used.
+          각 디렉터 페르소나에 사용할 AI 모델을 선택하세요. API 키 미설정 시 Mock 응답을 사용합니다.
         </p>
         <div className="flex flex-col gap-2.5">
           {SPEAKER_IDS.map(persona => {
@@ -128,7 +126,7 @@ export default function AITab() {
                   <select
                     value={selectedModel}
                     onChange={e => setPersonaModel(persona as DirectorId, e.target.value)}
-                    className="w-full text-xs rounded px-2 py-1.5 appearance-none pr-6"
+                    className="w-full text-[13px] rounded px-2 py-1.5 appearance-none pr-6"
                     style={{
                       background: 'var(--color-bg-surface)',
                       color: 'var(--color-text-primary)',
@@ -139,7 +137,7 @@ export default function AITab() {
                     data-testid={`model-select-${persona}`}
                   >
                     {Object.entries(GROUPED_OPTIONS).map(([provider, models]) => (
-                      <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
+                      <optgroup key={provider} label={PROVIDER_LABELS[provider as keyof typeof PROVIDER_LABELS] ?? provider}>
                         {models.map(m => (
                           <option key={m.id} value={m.id}>{m.label}</option>
                         ))}
@@ -163,15 +161,15 @@ export default function AITab() {
 
       {/* Report model */}
       <section>
-        <h3 className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Report AI Model</h3>
+        <h3 className="text-[13px] font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>보고서 AI 모델</h3>
         <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
-          Select the model used when AI summarizes and generates conversation reports. Selecting "Disabled" outputs the conversation as plain markdown.
+          대화 보고서를 AI가 요약·작성할 때 사용할 모델을 선택하세요. "사용 안 함" 선택 시 대화를 그대로 마크다운으로 출력합니다.
         </p>
         <div className="relative">
           <select
             value={reportModelId}
             onChange={e => setReportModelId(e.target.value)}
-            className="w-full text-xs rounded px-2 py-1.5 appearance-none pr-6"
+            className="w-full text-[13px] rounded px-2 py-1.5 appearance-none pr-6"
             style={{
               background: 'var(--color-bg-surface)',
               color: 'var(--color-text-primary)',
@@ -179,9 +177,9 @@ export default function AITab() {
               outline: 'none',
             }}
           >
-            <option value="">Disabled (output default format)</option>
+            <option value="">사용 안 함 (기본 형식 출력)</option>
             {Object.entries(GROUPED_OPTIONS).map(([provider, models]) => (
-              <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
+              <optgroup key={provider} label={PROVIDER_LABELS[provider as keyof typeof PROVIDER_LABELS] ?? provider}>
                 {models.map(m => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
@@ -200,8 +198,8 @@ export default function AITab() {
       {/* RAG document instruction */}
       <section>
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
-            RAG Document Reference Guidelines
+          <h3 className="text-[13px] font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+            RAG 문서 참조 지침
           </h3>
           <button
             onClick={() => setRagInstruction(DEFAULT_RAG_INSTRUCTION)}
@@ -212,16 +210,16 @@ export default function AITab() {
               color: 'var(--color-text-muted)',
               cursor: 'pointer',
             }}
-            title="Restore to defaults"
+            title="기본값으로 복원"
           >
-            Restore Defaults
+            기본값 복원
           </button>
         </div>
         <p className="text-xs mb-2" style={{ color: 'var(--color-text-muted)' }}>
-          Reference principles applied when delivering vault documents to the AI. Configures latest-data priority, factual accuracy, and insight extraction.
+          볼트 문서를 AI에게 전달할 때 적용되는 참조 원칙입니다. 최신 데이터 우선순위·사실 정확성·인사이트 도출 방식을 설정합니다.
         </p>
         <textarea
-          value={ragInstruction}
+          value={ragInstruction ?? ''}
           onChange={e => setRagInstruction(e.target.value)}
           rows={10}
           spellCheck={false}
@@ -229,16 +227,16 @@ export default function AITab() {
             width: '100%',
             background: 'var(--color-bg-surface)',
             border: '1px solid var(--color-border)',
-            borderRadius: 5,
+            borderRadius: 2,
             padding: '7px 9px',
-            fontSize: 11,
+            fontSize: 13,
             fontFamily: 'ui-monospace, monospace',
             color: 'var(--color-text-primary)',
             resize: 'vertical',
             lineHeight: 1.6,
             outline: 'none',
           }}
-          placeholder="e.g. - Always prioritize the most recent documents."
+          placeholder="예: - 항상 최신 문서를 우선 참조하세요."
         />
       </section>
 
@@ -247,8 +245,8 @@ export default function AITab() {
       {/* Response instructions */}
       <section>
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
-            AI Response Guidelines
+          <h3 className="text-[13px] font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+            AI 응답 지침
           </h3>
           <button
             onClick={() => setResponseInstructions(DEFAULT_RESPONSE_INSTRUCTIONS)}
@@ -259,13 +257,13 @@ export default function AITab() {
               color: 'var(--color-text-muted)',
               cursor: 'pointer',
             }}
-            title="Restore to default response guidelines"
+            title="기본 응답 원칙으로 복원"
           >
-            Restore Defaults
+            기본값 복원
           </button>
         </div>
         <p className="text-xs mb-2" style={{ color: 'var(--color-text-muted)' }}>
-          Response format and tone guidelines applied to all personas. Edit or add items as needed.
+          모든 페르소나에 공통 적용되는 응답 형식·태도 지침입니다. 수정하거나 항목을 추가하세요.
         </p>
       {/* Multi-agent RAG toggle */}
       <div className="flex items-center justify-between py-2">
@@ -274,7 +272,7 @@ export default function AITab() {
             Multi-agent RAG
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-            Related documents are summarized in parallel by a cheap Worker model, then passed to the Chief. Improves response quality at a slight latency cost.
+            연관 문서를 저렴한 Worker 모델로 병렬 요약 후 Chief에게 전달. 응답 품질 향상, 레이턴시 소폭 증가.
           </p>
         </div>
         <button
@@ -295,8 +293,113 @@ export default function AITab() {
         </button>
       </div>
 
+      {/* Citation mode toggle */}
+      <div className="flex items-start justify-between py-2">
+        <div>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            인용 모드 (할루시네이션 억제)
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+            ON: Worker가 문서 원문을 인용 추출, Chief가 추론 시 <strong>(추론)</strong> 표시. OFF: 기존 요약 방식.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={citationMode}
+          onClick={() => setCitationMode(!citationMode)}
+          className="shrink-0 ml-4 w-9 h-5 rounded-full transition-colors"
+          style={{
+            background: citationMode ? 'var(--color-accent)' : 'var(--color-bg-hover)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <span
+            className="block w-3.5 h-3.5 rounded-full bg-white transition-transform"
+            style={{ transform: citationMode ? 'translateX(18px)' : 'translateX(2px)', marginTop: 2 }}
+          />
+        </button>
+      </div>
+
+      {/* Self-Review toggle */}
+      <div className="flex items-start justify-between py-2">
+        <div>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            2-pass 자기 검토
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+            OFF 시 답변 1회 생성만 수행 (LLM 호출 1회 절감). ON 시 품질 검토 후 보완.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={selfReview}
+          onClick={() => setSelfReview(!selfReview)}
+          className="shrink-0 ml-4 w-9 h-5 rounded-full transition-colors"
+          style={{
+            background: selfReview ? 'var(--color-accent)' : 'var(--color-bg-hover)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <span
+            className="block w-3.5 h-3.5 rounded-full bg-white transition-transform"
+            style={{ transform: selfReview ? 'translateX(18px)' : 'translateX(2px)', marginTop: 2 }}
+          />
+        </button>
+      </div>
+
+      {/* nAgents slider */}
+      <div className="flex items-center justify-between py-2">
+        <div>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            서브 에이전트 수: {nAgents}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+            Multi-agent RAG에서 병렬 분석할 문서 수. 낮을수록 비용↓·속도↑ (기본값 6).
+          </p>
+        </div>
+        <input
+          type="range"
+          min={1} max={15} step={1}
+          value={nAgents}
+          onChange={e => setNAgents(Number(e.target.value))}
+          className="ml-4 w-24"
+          disabled={!multiAgentRAG}
+          style={{ accentColor: 'var(--color-accent)' }}
+        />
+      </div>
+
+      {/* Web Search toggle */}
+      <div className="flex items-start justify-between py-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <div>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            웹 검색 (DuckDuckGo)
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+            Worker가 볼트 외 최신 정보 필요 여부를 자율 판단해 DuckDuckGo 검색 후 컨텍스트 보강.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={webSearch}
+          onClick={() => setWebSearch(!webSearch)}
+          className="shrink-0 ml-4 w-9 h-5 rounded-full transition-colors"
+          style={{
+            background: webSearch ? 'var(--color-accent)' : 'var(--color-bg-hover)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <span
+            className="block w-3.5 h-3.5 rounded-full bg-white transition-transform"
+            style={{ transform: webSearch ? 'translateX(18px)' : 'translateX(2px)', marginTop: 2 }}
+          />
+        </button>
+      </div>
+
         <textarea
-          value={responseInstructions}
+          value={responseInstructions ?? ''}
           onChange={e => setResponseInstructions(e.target.value)}
           rows={8}
           spellCheck={false}
@@ -304,16 +407,50 @@ export default function AITab() {
             width: '100%',
             background: 'var(--color-bg-surface)',
             border: '1px solid var(--color-border)',
-            borderRadius: 5,
+            borderRadius: 2,
             padding: '7px 9px',
-            fontSize: 11,
+            fontSize: 13,
             fontFamily: 'ui-monospace, monospace',
             color: 'var(--color-text-primary)',
             resize: 'vertical',
             lineHeight: 1.6,
             outline: 'none',
           }}
-          placeholder="e.g. - Always summarize the answer within 3 lines."
+          placeholder="예: - 답변은 항상 3줄 이내로 요약해주세요."
+        />
+      </section>
+
+      <div style={{ borderTop: '1px solid var(--color-border)' }} />
+
+      {/* Sensitive keywords */}
+      <section className="flex flex-col gap-2">
+        <div>
+          <h3 style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: 4 }}>
+            민감 키워드
+          </h3>
+          <p style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+            질문에 아래 키워드가 포함되면 AI가 해당 주제를 최우선으로 상세하게 답변합니다. 쉼표 또는 줄바꿈으로 구분.
+          </p>
+        </div>
+        <textarea
+          value={sensitiveKeywords ?? ''}
+          onChange={e => setSensitiveKeywords(e.target.value)}
+          rows={4}
+          spellCheck={false}
+          style={{
+            width: '100%',
+            background: 'var(--color-bg-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 2,
+            padding: '7px 9px',
+            fontSize: 13,
+            fontFamily: 'ui-monospace, monospace',
+            color: 'var(--color-text-primary)',
+            resize: 'vertical',
+            lineHeight: 1.6,
+            outline: 'none',
+          }}
+          placeholder={'예: 월영, 렘브란트\n캐릭터 외형\n스킬 시스템'}
         />
       </section>
     </div>

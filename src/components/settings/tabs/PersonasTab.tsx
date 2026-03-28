@@ -297,7 +297,7 @@ export default function PersonasTab() {
                           style={{ ...fieldInputStyle, appearance: 'none', paddingRight: 24 }}
                         >
                           {Object.entries(GROUPED_OPTIONS).map(([provider, models]) => (
-                            <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
+                            <optgroup key={provider} label={(PROVIDER_LABELS as Record<string, string>)[provider] ?? provider}>
                               {models.map(m => (
                                 <option key={m.id} value={m.id}>{m.label}</option>
                               ))}
@@ -613,7 +613,7 @@ export default function PersonasTab() {
                               style={{ ...fieldInputStyle, appearance: 'none', paddingRight: 24 }}
                             >
                               {Object.entries(GROUPED_OPTIONS).map(([provider, models]) => (
-                                <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
+                                <optgroup key={provider} label={(PROVIDER_LABELS as Record<string, string>)[provider] ?? provider}>
                                   {models.map(m => (
                                     <option key={m.id} value={m.id}>{m.label}</option>
                                   ))}

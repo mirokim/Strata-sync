@@ -6,7 +6,7 @@ export type SpeakerId =
   | 'plan_director'
   | 'level_director'
   | 'prog_director'
-  | 'unknown'   // Phase 6: fallback when speaker is not specified in vault files
+  | 'unknown'   // Phase 6: vault 파일에서 speaker 미지정 시 폴백
 
 /** The 5 actual director personas (excludes the 'unknown' fallback). */
 export type DirectorId = Exclude<SpeakerId, 'unknown'>
@@ -26,27 +26,6 @@ export interface DocSection {
   body: string
   /** List of [[slug]] references found in this section's body */
   wikiLinks: string[]
-}
-
-export interface MockDocument {
-  id: string
-  filename: string
-  /** Folder path relative to vault root. Empty string for mock data. */
-  folderPath: string
-  /** Absolute filesystem path. Empty string for mock data. */
-  absolutePath: string
-  speaker: SpeakerId
-  date: string
-  /** File last-modified timestamp (ms) — from filesystem stat */
-  mtime?: number
-  tags: string[]
-  /** Top-level [[wiki-link]] references in frontmatter */
-  links: string[]
-  sections: DocSection[]
-  /** Full markdown string including YAML frontmatter (for FrontmatterBlock display) */
-  rawContent: string
-  /** Image filenames referenced via ![[image.png]] embeds in this document */
-  imageRefs?: string[]
 }
 
 // ── Graph types ───────────────────────────────────────────────────────────────
@@ -82,15 +61,15 @@ export interface GraphLink {
 }
 
 export interface PhysicsParams {
-  /** Center attraction force — range 0.0–1.0, default 0.05 */
+  /** Center attraction force — range 0.0–1.0, default 0.8 */
   centerForce: number
-  /** Node repulsion (charge) — range -1000–0, default -300 */
+  /** Node repulsion (charge) — range -1000–0, default -80 */
   charge: number
-  /** Link attraction strength — range 0.0–2.0, default 0.5 */
+  /** Link attraction strength — range 0.0–2.0, default 0.7 */
   linkStrength: number
-  /** Base link distance in px — range 20–300, default 80 */
+  /** Base link distance in px — range 20–300, default 60 */
   linkDistance: number
-  /** Wire (edge) opacity — range 0.0–1.0, default 0.4 */
+  /** Wire (edge) opacity — range 0.0–1.0, default 0.2 */
   linkOpacity: number
   /** Node sphere radius in 2D px — range 2–20, default 7 */
   nodeRadius: number
@@ -126,21 +105,22 @@ export interface ChatMessage {
   attachments?: Attachment[]
   /** Sub-agent/thinking process streamed before the main response */
   thinking?: string
+  /** Tool calls made during an agentic loop (Chat + tools mode) */
+  toolCalls?: Array<{ name: string; input: unknown; result: string }>
 }
 
 // ── Vault types (Phase 6) ─────────────────────────────────────────────────────
 
 /** A raw file read from the filesystem vault */
 export interface VaultFile {
-  relativePath: string   // relative to vault root (e.g. "subdir/note.md")
+  relativePath: string   // 볼트 루트 기준 (예: "subdir/note.md")
   absolutePath: string
   content: string        // UTF-8
-  mtime?: number         // file modification timestamp (ms)
+  mtime?: number         // 파일 수정 타임스탬프 (ms)
 }
 
 /**
  * A parsed markdown document loaded from the vault.
- * Structurally identical to MockDocument so both can be used interchangeably.
  * speaker may be 'unknown' if frontmatter is missing/invalid.
  */
 export interface LoadedDocument {
@@ -177,17 +157,28 @@ export interface LoadedDocument {
   /**
    * Graph RAG link weight hint from frontmatter `graph_weight:`.
    * - normal (default): standard traversal, link weight 1.0
-   * - low: traverse but link weight ~0.3 (100-499 outbound links)
+   * - low: traverse but link weight ~0.3 (100–499 outbound links)
    * - skip: exclude from RAG traversal entirely (500+ outbound links, link-only hubs)
    */
   graphWeight?: 'normal' | 'low' | 'skip'
-  /** Multi-vault: vault label this document belongs to (for Slack RAG context attribution) */
+  /** 멀티볼트: 이 문서가 속한 볼트 라벨 (Slack RAG 컨텍스트 출처 표시용) */
   vaultLabel?: string
 }
 
-// ── RAG types ───────────────────────────────────────────────────────────────
+// ── Backend / RAG types (Phase 1-3) ──────────────────────────────────────────
 
-/** A single result from keyword/TF-IDF search */
+/** A document chunk prepared for ChromaDB indexing */
+export interface BackendChunk {
+  doc_id: string
+  filename: string
+  section_id: string
+  heading: string
+  speaker: string
+  content: string
+  tags: string[]
+}
+
+/** A single result from vector similarity search */
 export interface SearchResult {
   doc_id: string
   filename: string
@@ -261,3 +252,6 @@ export type GraphMode = '3d' | '2d'
 export type CenterTab = 'graph' | 'document' | 'editor' | 'settings'
 export type AppState = 'launch' | 'main'
 export type NodeColorMode = 'document' | 'auto' | 'speaker' | 'folder' | 'tag' | 'topic'
+
+/** Alias for LoadedDocument — used by mock data and sandbox-derived components */
+export type MockDocument = LoadedDocument

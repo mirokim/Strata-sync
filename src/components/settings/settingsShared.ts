@@ -3,6 +3,7 @@
  */
 
 import type React from 'react'
+import type { ProviderId } from '@/types'
 import { MODEL_OPTIONS } from '@/lib/modelConfig'
 
 // ── Grouped model options ─────────────────────────────────────────────────────
@@ -12,11 +13,18 @@ export const GROUPED_OPTIONS = MODEL_OPTIONS.reduce<Record<string, typeof MODEL_
   {}
 )
 
-export const PROVIDER_LABELS: Record<string, string> = {
+export const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: 'Anthropic (Claude)',
   openai:    'OpenAI (GPT)',
   gemini:    'Google (Gemini)',
   grok:      'xAI (Grok)',
+}
+
+export const PROVIDER_PLACEHOLDERS: Record<ProviderId, string> = {
+  anthropic: 'sk-ant-...',
+  openai:    'sk-...',
+  gemini:    'AIza...',
+  grok:      'xai-...',
 }
 
 // ── Shared field style helpers ─────────────────────────────────────────────────
@@ -26,7 +34,7 @@ export const fieldInputStyle: React.CSSProperties = {
   background: 'var(--color-bg-surface)',
   color: 'var(--color-text-primary)',
   border: '1px solid var(--color-border)',
-  borderRadius: 5,
+  borderRadius: 2,
   padding: '5px 8px',
   fontSize: 12,
   outline: 'none',

@@ -6,6 +6,7 @@
  */
 
 import type { GraphLink } from '@/types'
+import { DEFAULT_LINK_STRENGTH } from '@/lib/constants'
 
 type WorkerResult =
   | { type: 'done';  requestId: string; scores: [string, number][] }
@@ -65,7 +66,7 @@ export function runPPRInWorker(
   const normalizedLinks = links.map(l => ({
     source: typeof l.source === 'string' ? l.source : (l.source as { id: string }).id,
     target: typeof l.target === 'string' ? l.target : (l.target as { id: string }).id,
-    strength: l.strength ?? 0.5,
+    strength: l.strength ?? DEFAULT_LINK_STRENGTH,
   }))
 
   return callWorker(

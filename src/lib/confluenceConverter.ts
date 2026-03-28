@@ -23,7 +23,8 @@ export interface ConfluenceAttachment {
   type: AttachmentType
 }
 
-export interface ConfluencePage {
+/** A page from a local Confluence HTML export (zip/folder). */
+export interface ConfluenceExportPage {
   /** Numeric Confluence page ID (from filename prefix) */
   id: string
   /** Raw title extracted from filename (after the numeric prefix) */
@@ -35,9 +36,9 @@ export interface ConfluencePage {
 interface ParsedHtml {
   /** Text from <h1> in the HTML */
   title: string
-  /** "Created:" date from .meta div (YYYY-MM-DD) */
+  /** "생성:" date from .meta div (YYYY-MM-DD) */
   created: string
-  /** "Modified:" date from .meta div (YYYY-MM-DD) */
+  /** "수정:" date from .meta div (YYYY-MM-DD) */
   modified: string
   /** Body converted to Markdown */
   content: string
@@ -46,7 +47,7 @@ interface ParsedHtml {
 // ── Folder scanner ────────────────────────────────────────────────────────────
 
 /**
- * Group files from a `webkitdirectory` input into ConfluencePage objects.
+ * Group files from a `webkitdirectory` input into ConfluenceExportPage objects.
  *
  * Expected structure (one level deep):
  *   {ID}_{TITLE}.html          ← page body
@@ -55,7 +56,7 @@ interface ParsedHtml {
  *     report.pdf
  *     slides.pptx
  */
-export function parseConfluenceFolder(files: File[]): ConfluencePage[] {
+export function parseConfluenceFolder(files: File[]): ConfluenceExportPage[] {
   const htmlFiles: File[] = []
   const attachmentFiles: File[] = []
 
@@ -70,10 +71,10 @@ export function parseConfluenceFolder(files: File[]): ConfluencePage[] {
     }
   }
 
-  const pages: ConfluencePage[] = []
+  const pages: ConfluenceExportPage[] = []
 
   for (const htmlFile of htmlFiles) {
-    // Filename pattern: "141268286_block_list.html"
+    // Filename pattern: "141268286_블록 목록.html"
     const match = htmlFile.name.match(/^(\d+)_(.+)\.html$/)
     if (!match) continue
 
@@ -119,8 +120,8 @@ export function htmlToMarkdown(html: string): ParsedHtml {
   const metaDiv = doc.querySelector('.meta')
   if (metaDiv) {
     const text = metaDiv.textContent ?? ''
-    created = text.match(/Created:\s*([\d-]+)/)?.[1] ?? ''
-    modified = text.match(/Modified:\s*([\d-]+)/)?.[1] ?? ''
+    created = text.match(/생성:\s*([\d-]+)/)?.[1] ?? ''
+    modified = text.match(/수정:\s*([\d-]+)/)?.[1] ?? ''
   }
 
   // Extract H1 title
@@ -292,28 +293,49 @@ function convertTable(tableEl: Element): string {
 // ── Attachment text extractors ────────────────────────────────────────────────
 
 /**
- * Best-effort text extraction from PPTX (ZIP+XML).
- * Text is stored in <a:t> elements inside ppt/slides/slide*.xml.
+ * Text extraction from PPTX using JSZip.
+ * Decompresses ZIP, reads ppt/slides/slide*.xml, extracts <a:t> elements.
  */
 export async function extractPptxText(file: File): Promise<string> {
+  const JSZip = (await import('jszip')).default
   const buffer = await file.arrayBuffer()
-  const raw = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
-  return (raw.match(/<a:t[^>]*>([^<]+)<\/a:t>/g) ?? [])
-    .map(m => m.replace(/<a:t[^>]*>/, '').replace(/<\/a:t>/, '').trim())
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  let zip: InstanceType<typeof JSZip>
+  try {
+    zip = await JSZip.loadAsync(buffer)
+  } catch {
+    return ''
+  }
+  const slideFiles = Object.keys(zip.files)
+    .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort()
+  const parts: string[] = []
+  for (const name of slideFiles) {
+    const xml = await zip.file(name)!.async('string')
+    const texts = (xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) ?? [])
+      .map(m => m.replace(/<a:t[^>]*>/, '').replace(/<\/a:t>/, '').trim())
+      .filter(Boolean)
+    if (texts.length) parts.push(texts.join(' '))
+  }
+  return parts.join('\n').replace(/\s+/g, ' ').trim()
 }
 
 /**
- * Best-effort text extraction from XLSX (ZIP+XML).
- * Shared strings are stored in <t> elements inside xl/sharedStrings.xml.
+ * Text extraction from XLSX using JSZip.
+ * Reads xl/sharedStrings.xml for string values.
  */
 export async function extractXlsxText(file: File): Promise<string> {
+  const JSZip = (await import('jszip')).default
   const buffer = await file.arrayBuffer()
-  const raw = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
-  return (raw.match(/<t[^>]*>([^<]+)<\/t>/g) ?? [])
+  let zip: InstanceType<typeof JSZip>
+  try {
+    zip = await JSZip.loadAsync(buffer)
+  } catch {
+    return ''
+  }
+  const ssFile = zip.file('xl/sharedStrings.xml')
+  if (!ssFile) return ''
+  const xml = await ssFile.async('string')
+  return (xml.match(/<t[^>]*>([^<]*)<\/t>/g) ?? [])
     .map(m => m.replace(/<t[^>]*>/, '').replace(/<\/t>/, '').trim())
     .filter(Boolean)
     .join(' ')
@@ -327,15 +349,15 @@ export async function extractXlsxText(file: File): Promise<string> {
 const MAX_ATTACH_CHARS = 3000
 
 /**
- * Convert a single ConfluencePage to an Obsidian-compatible Markdown string.
+ * Convert a single ConfluenceExportPage to an Obsidian-compatible Markdown string.
  * Includes HTML body + extracted text from document attachments.
  */
-export async function convertConfluencePage(page: ConfluencePage): Promise<string> {
+export async function convertConfluenceExportPage(page: ConfluenceExportPage): Promise<string> {
   // Read HTML file
   const htmlContent = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(new Error('Failed to read HTML'))
+    reader.onerror = () => reject(new Error('HTML 읽기 실패'))
     reader.readAsText(page.htmlFile, 'utf-8')
   })
 
@@ -351,8 +373,8 @@ export async function convertConfluencePage(page: ConfluencePage): Promise<strin
     `date: ${created || new Date().toISOString().split('T')[0]}`,
     ...(modified && modified !== created ? [`modified: ${modified}`] : []),
     `speaker: unknown`,
-    `tags: [reference]`,
-    `type: reference`,
+    `tags: [기타]`,
+    `type: 기타`,
     '---',
   ].join('\n')
 
@@ -365,10 +387,10 @@ export async function convertConfluencePage(page: ConfluencePage): Promise<strin
   const imgAttachments = page.attachments.filter(a => a.type === 'image')
 
   if (docAttachments.length > 0 || imgAttachments.length > 0) {
-    md += '\n\n---\n\n### 📎 Attachments\n\n'
+    md += '\n\n---\n\n### 📎 첨부파일\n\n'
 
     if (imgAttachments.length > 0) {
-      md += `**Images (${imgAttachments.length})**\n\n`
+      md += `**이미지 (${imgAttachments.length}개)**\n\n`
       md += imgAttachments.map(a => `- \`${a.file.name}\``).join('\n') + '\n\n'
     }
 
@@ -383,13 +405,13 @@ export async function convertConfluencePage(page: ConfluencePage): Promise<strin
 
         if (text.trim()) {
           md += text.slice(0, MAX_ATTACH_CHARS)
-          if (text.length > MAX_ATTACH_CHARS) md += '\n\n_(content truncated)_'
+          if (text.length > MAX_ATTACH_CHARS) md += '\n\n_(내용 일부 생략)_'
           md += '\n\n'
         } else {
-          md += '_text extraction not available_\n\n'
+          md += '_텍스트 추출 불가_\n\n'
         }
       } catch {
-        md += '_conversion failed_\n\n'
+        md += '_변환 실패_\n\n'
       }
     }
   }

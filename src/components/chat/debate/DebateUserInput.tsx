@@ -6,9 +6,8 @@ import { useState, useRef } from 'react'
 import { Send, Paperclip, X, FileText } from 'lucide-react'
 import { useDebateStore } from '@/stores/debateStore'
 import { generateId } from '@/lib/utils'
+import { MAX_FILE_SIZE } from '@/lib/constants'
 import type { ReferenceFile } from '@/types'
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MAX_FILES = 5
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf']
 const ACCEPTED_EXTENSIONS = '.png,.jpg,.jpeg,.gif,.webp,.pdf'

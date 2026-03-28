@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, BarChart2, Trash2,
   Settings, Cpu, GitMerge, Keyboard, Info,
-  Layers,
+  Layers, Bot, Database,
   Users, Tag, Download,
   DollarSign, FolderOpen, MessageSquare, Fish, Search,
 } from 'lucide-react'
@@ -33,12 +33,14 @@ import VaultManagerTab from './tabs/VaultManagerTab'
 import SlackBotTab from './tabs/SlackBotTab'
 import MirofishTab from './tabs/MirofishTab'
 import SearchTab from './tabs/SearchTab'
+import EditAgentTab from './tabs/EditAgentTab'
+import VectorEmbedTab from './tabs/VectorEmbedTab'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type SettingsTab =
   | 'stats' | 'trash' | 'usage' | 'vault-manager'
-  | 'general' | 'ai' | 'search' | 'personas' | 'debate' | 'shortcuts' | 'project' | 'tags'
+  | 'general' | 'ai' | 'search' | 'personas' | 'debate' | 'shortcuts' | 'project' | 'tags' | 'edit-agent' | 'vector-embed'
   | 'slack-bot' | 'mirofish'
   | 'confluence'
   | 'about'
@@ -67,8 +69,10 @@ const NAV: NavGroup[] = [
       { id: 'tags',      icon: Tag,       label: 'Tags' },
       { id: 'personas',  icon: Users,     label: 'Personas' },
       { id: 'project',   icon: Layers,    label: 'Project' },
-      { id: 'debate',    icon: GitMerge,  label: 'Debate' },
-      { id: 'shortcuts', icon: Keyboard,  label: 'Shortcuts' },
+      { id: 'debate',       icon: GitMerge,  label: 'Debate' },
+      { id: 'edit-agent',   icon: Bot,       label: 'Edit Agent' },
+      { id: 'vector-embed', icon: Database,  label: 'Vector Embed' },
+      { id: 'shortcuts',    icon: Keyboard,  label: 'Shortcuts' },
     ],
   },
   {
@@ -118,6 +122,8 @@ function renderTabContent(tab: SettingsTab) {
     case 'slack-bot':      return <SlackBotTab />
     case 'mirofish':       return <MirofishTab />
     case 'search':         return <SearchTab />
+    case 'edit-agent':     return <EditAgentTab />
+    case 'vector-embed':   return <VectorEmbedTab />
     case 'about':          return <AboutTab />
     default:          return <PlaceholderContent label={ALL_ITEMS.find(i => i.id === tab)?.label ?? tab} />
   }

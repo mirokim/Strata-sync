@@ -1,4 +1,3 @@
-// TODO: Wire up — currently not imported by any consumer
 /**
  * webSearch.ts — DuckDuckGo HTML search (via Electron IPC)
  *

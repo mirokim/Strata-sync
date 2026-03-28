@@ -3,6 +3,12 @@ import { useGraphStore, DEFAULT_PHYSICS } from '@/stores/graphStore'
 import { Settings, RotateCcw, ChevronRight, ChevronDown, Home } from 'lucide-react'
 import { graphCallbacks } from '@/lib/graphEvents'
 
+const CLUSTER_MODES = [
+  { value: 'none',   label: 'Off' },
+  { value: 'tag',    label: 'Tag' },
+  { value: 'folder', label: 'Folder' },
+] as const
+
 interface SliderDef {
   key: keyof typeof DEFAULT_PHYSICS
   label: string
@@ -21,17 +27,15 @@ const SLIDERS: SliderDef[] = [
 ]
 
 export default function PhysicsControls() {
-  const { physics, updatePhysics, resetPhysics } = useGraphStore()
+  const { physics, updatePhysics, resetPhysics, clusterMode, setClusterMode } = useGraphStore()
   const [isOpen, setIsOpen] = useState(false)
 
   return (
     <div
       style={{
-        background: 'var(--color-bg-overlay)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
+        background: 'var(--color-bg-secondary)',
         border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 8,
+        borderRadius: 2,
         overflow: 'hidden',
       }}
       aria-label="Physics controls"
@@ -51,7 +55,7 @@ export default function PhysicsControls() {
           color: isOpen ? 'var(--color-accent)' : 'var(--color-text-muted)',
           transition: 'color 0.15s',
         }}
-        title="Expand/collapse Physics controls"
+        title="Physics controls 펼치기/접기"
       >
         <Settings size={11} />
         <span
@@ -75,14 +79,14 @@ export default function PhysicsControls() {
           style={{
             padding: '2px 10px 10px',
             minWidth: 200,
-            borderTop: '1px solid rgba(255,255,255,0.06)',
+            borderTop: '1px solid var(--color-bg-tertiary)',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 6 }}>
             <button
               onClick={() => graphCallbacks.resetCamera?.()}
-              title="Reset viewport"
-              aria-label="Reset viewport"
+              title="뷰포트 초기화"
+              aria-label="뷰포트 초기화"
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -96,8 +100,8 @@ export default function PhysicsControls() {
             </button>
             <button
               onClick={resetPhysics}
-              title="Reset Physics"
-              aria-label="Reset Physics"
+              title="Physics 초기화"
+              aria-label="Physics 초기화"
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -152,6 +156,35 @@ export default function PhysicsControls() {
                 </span>
               </div>
             ))}
+
+            {/* Cluster mode toggle — 3D only */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <span style={{ fontSize: 10, width: 56, flexShrink: 0, color: 'var(--color-text-secondary)' }}>
+                Cluster
+              </span>
+              <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+                {CLUSTER_MODES.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setClusterMode(value)}
+                    style={{
+                      flex: 1,
+                      fontSize: 10,
+                      padding: '2px 0',
+                      borderRadius: 3,
+                      border: '1px solid',
+                      cursor: 'pointer',
+                      borderColor: clusterMode === value ? 'var(--color-accent)' : 'var(--color-border)',
+                      background: clusterMode === value ? 'var(--color-accent)' : 'transparent',
+                      color: clusterMode === value ? '#fff' : 'var(--color-text-muted)',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}

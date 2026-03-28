@@ -10,6 +10,7 @@ import { useSettingsStore, getApiKey } from '@/stores/settingsStore'
 import { getProviderForModel } from '@/lib/modelConfig'
 import { SPEAKER_IDS, SPEAKER_CONFIG } from '@/lib/speakerConfig'
 import { generateId } from '@/lib/utils'
+import { MAX_FILE_SIZE } from '@/lib/constants'
 import {
   ROLE_OPTIONS,
   ROLE_GROUPS,
@@ -37,7 +38,6 @@ const MODE_DESCRIPTIONS: Record<DiscussionMode, string> = {
 
 const DELAY_OPTIONS = [5, 10, 15, 30] as const
 const REF_MAX_LENGTH = 10_000
-const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MAX_FILES = 5
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf']
 const ACCEPTED_EXTENSIONS = '.png,.jpg,.jpeg,.gif,.webp,.pdf'

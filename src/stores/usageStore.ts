@@ -2,7 +2,8 @@
  * Session token usage tracker.
  *
  * Records cumulative input/output tokens and calculates estimated USD cost
- * based on MODEL_PRICING table. Resets on demand (e.g. session reset button).
+ * based on MODEL_PRICING table. Each call is also logged with timestamp
+ * for per-call visibility. Log persists to localStorage across sessions.
  */
 import { create } from 'zustand'
 
@@ -40,32 +41,77 @@ export function estimateCost(modelId: string, inputTokens: number, outputTokens:
   return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output
 }
 
-interface UsageState {
-  /** Cumulative input tokens this session */
-  totalInputTokens: number
-  /** Cumulative output tokens this session */
-  totalOutputTokens: number
-  /** Cumulative USD cost this session */
-  totalCostUsd: number
+// ── Usage log (per-call) ──────────────────────────────────────────────────────
 
-  /** Record one LLM call's token usage */
-  recordUsage: (modelId: string, inputTokens: number, outputTokens: number) => void
-  /** Reset all counters to zero */
+export interface UsageLogEntry {
+  timestamp: string       // ISO 8601
+  modelId: string
+  inputTokens: number
+  outputTokens: number
+  costUsd: number
+  caller: string          // e.g. 'chat', 'editAgent', 'debate', 'graphInsight'
+}
+
+const STORAGE_KEY = 'strata-sync:usage-log'
+const MAX_LOG_ENTRIES = 500
+
+function loadLog(): UsageLogEntry[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function persistLog(log: UsageLogEntry[]) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(log.slice(-MAX_LOG_ENTRIES))) } catch { /* quota */ }
+}
+
+// ── Store ─────────────────────────────────────────────────────────────────────
+
+interface UsageState {
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCostUsd: number
+  log: UsageLogEntry[]
+
+  recordUsage: (modelId: string, inputTokens: number, outputTokens: number, caller?: string) => void
   resetSession: () => void
+  clearLog: () => void
 }
 
 export const useUsageStore = create<UsageState>()((set) => ({
   totalInputTokens:  0,
   totalOutputTokens: 0,
   totalCostUsd:      0,
+  log:               loadLog(),
 
-  recordUsage: (modelId, inputTokens, outputTokens) =>
-    set((state) => ({
-      totalInputTokens:  state.totalInputTokens  + inputTokens,
-      totalOutputTokens: state.totalOutputTokens + outputTokens,
-      totalCostUsd:      state.totalCostUsd      + estimateCost(modelId, inputTokens, outputTokens),
-    })),
+  recordUsage: (modelId, inputTokens, outputTokens, caller = 'chat') => {
+    const costUsd = estimateCost(modelId, inputTokens, outputTokens)
+    const entry: UsageLogEntry = {
+      timestamp: new Date().toISOString(),
+      modelId,
+      inputTokens,
+      outputTokens,
+      costUsd,
+      caller,
+    }
+    set((state) => {
+      const newLog = [...state.log, entry].slice(-MAX_LOG_ENTRIES)
+      persistLog(newLog)
+      return {
+        totalInputTokens:  state.totalInputTokens  + inputTokens,
+        totalOutputTokens: state.totalOutputTokens + outputTokens,
+        totalCostUsd:      state.totalCostUsd      + costUsd,
+        log:               newLog,
+      }
+    })
+  },
 
   resetSession: () =>
     set({ totalInputTokens: 0, totalOutputTokens: 0, totalCostUsd: 0 }),
+
+  clearLog: () => {
+    persistLog([])
+    set({ log: [] })
+  },
 }))

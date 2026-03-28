@@ -261,8 +261,12 @@ const STATUS_LABEL: Partial<Record<ImportStatus, string>> = {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ConfluenceTab() {
-  const { confluenceConfig, setConfluenceConfig } = useSettingsStore()
   const vaultPath = useVaultStore(s => s.vaultPath)
+  const activeVaultId = useVaultStore(s => s.activeVaultId)
+  const confluenceConfigs = useSettingsStore(s => s.confluenceConfigs)
+  const setConfluenceConfigForVault = useSettingsStore(s => s.setConfluenceConfigForVault)
+  const confluenceConfig = confluenceConfigs[activeVaultId] ?? confluenceConfigs['__migrated__'] ?? { baseUrl: '', authType: 'cloud' as const, email: '', apiToken: '', spaceKey: '', targetFolder: 'active', dateFrom: '2025-01-01', dateTo: '', bypassSSL: false, autoSync: false, autoSyncIntervalMinutes: 60 }
+  const setConfluenceConfig = (c: Parameters<typeof setConfluenceConfigForVault>[1]) => setConfluenceConfigForVault(activeVaultId || '__migrated__', c)
 
   const [status, setStatus] = useState<ImportStatus>('idle')
   const [log, setLog] = useState<string[]>([])

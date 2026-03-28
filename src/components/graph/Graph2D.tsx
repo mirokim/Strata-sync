@@ -1,9 +1,11 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo, type CSSProperties } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useGraphStore } from '@/stores/graphStore'
 import { useUIStore } from '@/stores/uiStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useGraphSimulation, type SimNode, type SimLink } from '@/hooks/useGraphSimulation'
 import { SPEAKER_CONFIG } from '@/lib/speakerConfig'
+import { LABEL_MIN_GAP, GRAPH_VIEW_PADDING } from '@/lib/constants'
 import { buildNodeColorMap, getNodeColor, lightenColor, degreeScaleFactor, degreeSize, DEGREE_LIGHT_MAX } from '@/lib/nodeColors'
 import type { GraphNode, GraphLink } from '@/types'
 import NodeTooltip from './NodeTooltip'
@@ -16,7 +18,22 @@ interface Props {
 const LABEL_Y_OFFSET = 16  // px below node center
 
 export default function Graph2D({ width, height }: Props) {
-  const { nodes, links, selectedNodeId, hoveredNodeId, aiHighlightNodeIds, setSelectedNode, setHoveredNode, physics, setGraphLayoutReady } = useGraphStore()
+  const { nodes, links, selectedNodeId, hoveredNodeId, aiHighlightNodeIds, setSelectedNode, setHoveredNode, physics, setGraphLayoutReady, degreeMap, maxDegree, adjacencyByIndex } = useGraphStore(
+    useShallow(s => ({
+      nodes: s.nodes,
+      links: s.links,
+      selectedNodeId: s.selectedNodeId,
+      hoveredNodeId: s.hoveredNodeId,
+      aiHighlightNodeIds: s.aiHighlightNodeIds,
+      setSelectedNode: s.setSelectedNode,
+      setHoveredNode: s.setHoveredNode,
+      physics: s.physics,
+      setGraphLayoutReady: s.setGraphLayoutReady,
+      degreeMap: s.degreeMap,
+      maxDegree: s.maxDegree,
+      adjacencyByIndex: s.adjacencyByIndex,
+    }))
+  )
   const { setSelectedDoc, setCenterTab, centerTab, nodeColorMode, openInEditor } = useUIStore()
   const showNodeLabels = useSettingsStore(s => s.showNodeLabels)
   const isFast = useSettingsStore(s => s.paragraphRenderQuality === 'fast')
@@ -30,17 +47,8 @@ export default function Graph2D({ width, height }: Props) {
     [nodes, nodeColorMode, tagColors, folderColors]
   )
 
-  // Degree map — Obsidian-style node sizing + brightness
-  const { degreeMap, maxDegree } = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const l of links) {
-      const s = typeof l.source === 'string' ? l.source : (l.source as { id: string }).id
-      const t = typeof l.target === 'string' ? l.target : (l.target as { id: string }).id
-      map.set(s, (map.get(s) ?? 0) + 1)
-      map.set(t, (map.get(t) ?? 0) + 1)
-    }
-    return { degreeMap: map, maxDegree: Math.max(1, ...map.values()) }
-  }, [links])
+  // degreeMap, maxDegree, adjacencyByIndex — precomputed in graphStore.setLinks()
+  // (no local useMemo needed — avoids O(|E|) rebuild per render)
 
   // DOM refs — updated imperatively in simulation tick (avoids React re-render per frame)
   // SVGCircleElement (doc nodes) or SVGRectElement (image nodes)
@@ -72,7 +80,7 @@ export default function Graph2D({ width, height }: Props) {
   const cullSVGLabels = useCallback((simNodes: SimNode[]) => {
     if (!showNodeLabelsRef.current) return
     const { scale, x: tx, y: ty } = viewRef.current
-    const MIN_GAP = 64
+    const MIN_GAP = LABEL_MIN_GAP
     const labelMap = labelEls.current
     const dMap = degreeMapRef.current
     const maxDeg = maxDegreeRef.current
@@ -84,8 +92,16 @@ export default function Graph2D({ width, height }: Props) {
       return (dMap.get(b.id) ?? 0) - (dMap.get(a.id) ?? 0)
     })
 
-    const shown: Array<{ sx: number; sy: number }> = []
     const fontSize = `${9 / scale}px`
+    // Grid-based spatial bucketing: O(1) per label instead of O(n) scan
+    // Each cell = MIN_GAP px; check 3×3 neighbourhood ≈ original MIN_GAP bounding-box check
+    const occupied = new Set<number>()
+    const cellOf = (v: number) => Math.floor(v / MIN_GAP)
+    // Numeric key encoding: avoids string concat/hashing in hot path
+    // Offset by 5000 to handle negative coords; width = 10001
+    const KEY_W = 10001
+    const KEY_OFF = 5000
+    const cellKey = (cx: number, cy: number) => (cx + KEY_OFF) * KEY_W + (cy + KEY_OFF)
 
     for (const node of sorted) {
       const lEl = labelMap.get(node.id)
@@ -100,13 +116,21 @@ export default function Graph2D({ width, height }: Props) {
 
       const sx = node.x * scale + tx
       const sy = node.y * scale + ty
-      const tooClose = !isSelected && shown.some(
-        p => Math.abs(p.sx - sx) < MIN_GAP && Math.abs(p.sy - sy) < MIN_GAP
-      )
+      const gcx = cellOf(sx)
+      const gcy = cellOf(sy)
+
+      let tooClose = false
+      if (!isSelected) {
+        outer: for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            if (occupied.has(cellKey(gcx + dx, gcy + dy))) { tooClose = true; break outer }
+          }
+        }
+      }
       if (tooClose) {
         lEl.setAttribute('opacity', '0')
       } else {
-        shown.push({ sx, sy })
+        occupied.add(cellKey(gcx, gcy))
         lEl.setAttribute('opacity', isSelected ? '0.95' : '0.7')
         lEl.style.fontSize = fontSize
       }
@@ -126,6 +150,8 @@ export default function Graph2D({ width, height }: Props) {
 
   // Drag state — which node is being dragged
   const draggingNodeRef = useRef<string | null>(null)
+  const isDraggedRef = useRef(false)          // true only after drag threshold exceeded
+  const mouseDownPosRef = useRef({ x: 0, y: 0 })
 
   // Adjacency map: nodeId → Set<linkIndex> (built from graphStore links)
   const adjacencyRef = useRef<Map<string, Set<number>>>(new Map())
@@ -140,11 +166,14 @@ export default function Graph2D({ width, height }: Props) {
   // ── Simulation tick — direct DOM mutation, no React state ──────────────────
   const handleTick = useCallback((simNodes: SimNode[], simLinks: SimLink[]) => {
     lastSimNodesRef.current = simNodes
+    const selId = selectedNodeIdRef.current
+    let selNode: SimNode | undefined
     for (const node of simNodes) {
+      if (node.id === selId) selNode = node  // O(1) capture during existing loop
       const el = nodeEls.current.get(node.id)
       if (el) {
         if (el.tagName.toLowerCase() === 'rect') {
-          // Image node (rect): update x/y relative to center + rotate transform
+          // 이미지 노드(rect): x/y를 중심 기준으로 업데이트 + rotate transform
           const halfW = parseFloat(el.getAttribute('width') ?? '12') / 2
           el.setAttribute('x', String(node.x - halfW))
           el.setAttribute('y', String(node.y - halfW))
@@ -160,13 +189,9 @@ export default function Graph2D({ width, height }: Props) {
         lEl.setAttribute('y', String((node.y ?? 0) + LABEL_Y_OFFSET))
       }
     }
-    const selId = selectedNodeIdRef.current
-    if (selRingEl.current && selId) {
-      const sel = simNodes.find(n => n.id === selId)
-      if (sel) {
-        selRingEl.current.setAttribute('cx', String(sel.x))
-        selRingEl.current.setAttribute('cy', String(sel.y))
-      }
+    if (selRingEl.current && selNode) {
+      selRingEl.current.setAttribute('cx', String(selNode.x))
+      selRingEl.current.setAttribute('cy', String(selNode.y))
     }
     simLinks.forEach((link, i) => {
       const el = linkEls.current.get(i)
@@ -197,7 +222,7 @@ export default function Graph2D({ width, height }: Props) {
     }
     const graphW = Math.max(maxX - minX, 100)
     const graphH = Math.max(maxY - minY, 100)
-    const padding = 48
+    const padding = GRAPH_VIEW_PADDING
     const scaleX = (width - padding * 2) / graphW
     const scaleY = (height - padding * 2) / graphH
     const scale = Math.min(scaleX, scaleY, 2)
@@ -220,19 +245,8 @@ export default function Graph2D({ width, height }: Props) {
     nodeDataMapRef.current = new Map(nodes.map(n => [n.id, n]))
   }, [nodes])
 
-  // ── Build adjacency map whenever links change ──────────────────────────────
-  useEffect(() => {
-    const map = new Map<string, Set<number>>()
-    links.forEach((link: GraphLink, i: number) => {
-      const src = typeof link.source === 'string' ? link.source : (link.source as GraphNode).id
-      const tgt = typeof link.target === 'string' ? link.target : (link.target as GraphNode).id
-      if (!map.has(src)) map.set(src, new Set())
-      if (!map.has(tgt)) map.set(tgt, new Set())
-      map.get(src)!.add(i)
-      map.get(tgt)!.add(i)
-    })
-    adjacencyRef.current = map
-  }, [links])
+  // ── Sync adjacencyRef from store (precomputed in setLinks — no local rebuild) ──
+  useEffect(() => { adjacencyRef.current = adjacencyByIndex }, [adjacencyByIndex])
 
   // ── Helper: client coords → graph (simulation) coords ─────────────────────
   const clientToGraph = useCallback((clientX: number, clientY: number) => {
@@ -298,7 +312,9 @@ export default function Graph2D({ width, height }: Props) {
         simRef.current?.alphaTarget(0)
         draggingNodeRef.current = null
         setHoveredNode(null)
-        setTooltip(null)
+        // 실제 드래그인 경우에만 tooltip 제거 (클릭이면 onClick에서 tooltip 표시됨)
+        if (isDraggedRef.current) setTooltip(null)
+        isDraggedRef.current = false
       }
       if (isPanningRef.current) {
         isPanningRef.current = false
@@ -327,7 +343,14 @@ export default function Graph2D({ width, height }: Props) {
   const handleSVGMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     // Node drag takes priority over background pan
     if (draggingNodeRef.current) {
-      setTooltip(null)  // clear tooltip as soon as drag begins
+      // 4px 임계값 초과 시에만 드래그로 판정
+      if (!isDraggedRef.current) {
+        const dx = e.clientX - mouseDownPosRef.current.x
+        const dy = e.clientY - mouseDownPosRef.current.y
+        if (dx * dx + dy * dy > 16) isDraggedRef.current = true
+      }
+      if (!isDraggedRef.current) return  // 임계값 미달 → 아직 클릭 처리
+      setTooltip(null)  // 드래그 확정 시 tooltip 제거
       const { x, y } = clientToGraph(e.clientX, e.clientY)
       const simNode = simNodesRef.current.find(n => n.id === draggingNodeRef.current)
       if (simNode) {
@@ -396,12 +419,15 @@ export default function Graph2D({ width, height }: Props) {
   useLayoutEffect(() => {
     const nodeMap = nodeEls.current
     const graphGroup = graphGroupRef.current
-    if (aiHighlightNodeIds.length === 0) {
+    const clearHighlights = () => {
       graphGroup?.classList.remove('graph-ai-faded')
       nodeMap.forEach(el => {
         el.style.animation = ''
         el.removeAttribute('data-hl')
       })
+    }
+    if (aiHighlightNodeIds.length === 0) {
+      clearHighlights()
       return
     }
     const highlightSet = new Set(aiHighlightNodeIds)
@@ -417,14 +443,17 @@ export default function Graph2D({ width, height }: Props) {
         el.style.animation = ''
       }
     })
+    return clearHighlights
   }, [aiHighlightNodeIds, nodes])
 
   // ── Node event handlers ───────────────────────────────────────────────────
 
-  // Start dragging: pin node at current mouse position, activate highlight + show tooltip
+  // Start dragging: pin node at current mouse position, activate highlight
   const handleNodeMouseDown = useCallback((nodeId: string, e: React.MouseEvent) => {
     e.stopPropagation()  // prevent SVG pan from starting
     draggingNodeRef.current = nodeId
+    isDraggedRef.current = false
+    mouseDownPosRef.current = { x: e.clientX, y: e.clientY }
     const { x, y } = clientToGraph(e.clientX, e.clientY)
     const simNode = simNodesRef.current.find(n => n.id === nodeId)
     if (simNode) {
@@ -434,12 +463,13 @@ export default function Graph2D({ width, height }: Props) {
     }
     if (svgRef.current) svgRef.current.style.cursor = 'grabbing'
     setHoveredNode(nodeId)
-    setTooltip({ nodeId, x: e.clientX, y: e.clientY })
   }, [clientToGraph, simNodesRef, simRef, setHoveredNode])
 
-  // Single click: just select the node (highlight in graph, no tab switch)
-  const handleNodeClick = useCallback((nodeId: string) => {
+  // Single click: select node and show tooltip
+  const handleNodeClick = useCallback((nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation()  // SVG 빈공간 onClick으로 버블링 방지
     setSelectedNode(nodeId)
+    setTooltip({ nodeId, x: e.clientX, y: e.clientY })
   }, [setSelectedNode])
 
   // Double click: select + open editor (skip phantom nodes)
@@ -462,7 +492,7 @@ export default function Graph2D({ width, height }: Props) {
     if (draggingNodeRef.current) return
     isPanningRef.current = false
     setHoveredNode(null)
-    setTooltip(null)
+    // tooltip은 클릭으로 고정되므로 마우스가 노드를 벗어나도 유지
   }, [setHoveredNode])
 
   // ── Neighbor highlight — O(k) delta updates via CSS class + data-hl attr ───
@@ -560,6 +590,7 @@ export default function Graph2D({ width, height }: Props) {
         onMouseMove={handleSVGMouseMove}
         onMouseUp={handleSVGMouseUp}
         onMouseLeave={handleSVGMouseUp}
+        onClick={() => setTooltip(null)}
       >
         {/* Single transform group — pan/zoom applied here, sim tick updates positions inside */}
         <g ref={graphGroupRef}>
@@ -624,7 +655,7 @@ export default function Graph2D({ width, height }: Props) {
                   filter: isSelected ? `drop-shadow(0 0 6px ${baseColor})` : undefined,
                   transition: isFast ? undefined : 'r 0.15s, fill-opacity 0.15s',
                 } as CSSProperties,
-                onClick: () => handleNodeClick(node.id),
+                onClick: (e: React.MouseEvent) => handleNodeClick(node.id, e),
                 onDoubleClick: () => handleNodeDoubleClick(node.id, node.docId),
                 onMouseDown: (e: React.MouseEvent) => handleNodeMouseDown(node.id, e),
                 onMouseEnter: () => handleMouseEnter(node.id),
@@ -632,7 +663,7 @@ export default function Graph2D({ width, height }: Props) {
                 'data-node-id': node.id,
               }
               if (node.isImage) {
-                // Image node: diamond shape — rect rotated 45 degrees
+                // 이미지 노드: 다이아몬드(마름모) — rect를 45도 회전
                 const s = isSelected ? nr + 1.5 : Math.max(nr - 1, 2)
                 return (
                   <rect

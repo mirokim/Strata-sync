@@ -4,8 +4,8 @@
  * One wake cycle:
  *   1. Load vault file list
  *   2. For each .md file, check if it needs refinement (basic heuristics)
- *   3. Read file content -> call LLM with refinement manual
- *   4. Parse LLM output for edits -> apply + save
+ *   3. Read file content → call LLM with refinement manual
+ *   4. Parse LLM output for edits → apply + save
  *   5. Log all actions to editAgentStore + JSONL log file
  */
 
@@ -18,12 +18,12 @@ import { showToast } from '@/stores/toastStore'
 import { logger } from '@/lib/logger'
 import { formatLocalDate } from '@/lib/formatUtils'
 import { invalidateTfIdfCache } from '@/lib/tfidfCache'
-import { EDIT_AGENT_LOG_PATH } from '@/lib/constants'
+import { EDIT_AGENT_LOG_PATH, AGENT_MAX_OUTPUT_TOKENS, EDIT_AGENT_MAX_FILE_CHARS } from '@/lib/constants'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const LOG_FILE = EDIT_AGENT_LOG_PATH
-const MAX_FILE_CHARS = 12000  // LLM context cap per file
+const MAX_FILE_CHARS = EDIT_AGENT_MAX_FILE_CHARS
 const MAX_FILES_PER_CYCLE = 10
 
 // ── Log persistence ────────────────────────────────────────────────────────────
@@ -54,9 +54,42 @@ function needsRefinement(content: string): boolean {
 
 // ── LLM prompt builder ─────────────────────────────────────────────────────────
 
-/** Build a system prompt framing the manual as binding rules */
+/** Build integration status for system prompt context */
+interface IntegrationStatus {
+  confluence: { connected: boolean; spaceKey?: string; baseUrl?: string }
+  jira: { connected: boolean; projectKey?: string; baseUrl?: string }
+}
 
-function buildAgentSystemPrompt(manual: string, vaultPath?: string | null): string {
+function buildIntegrationStatus(vaultId: string): IntegrationStatus {
+  const { confluenceConfigs, jiraConfigs } = useSettingsStore.getState()
+  const cc = confluenceConfigs[vaultId] ?? confluenceConfigs['__migrated__']
+  const jc = jiraConfigs[vaultId] ?? jiraConfigs['__migrated__']
+  return {
+    confluence: {
+      connected: Boolean(cc?.baseUrl && cc?.apiToken),
+      spaceKey: cc?.spaceKey || undefined,
+      baseUrl: cc?.baseUrl || undefined,
+    },
+    jira: {
+      connected: Boolean(jc?.baseUrl && jc?.apiToken),
+      projectKey: jc?.projectKey || undefined,
+      baseUrl: jc?.baseUrl || undefined,
+    },
+  }
+}
+
+function buildSystemPrompt(manual: string, vaultPath?: string | null, integrations?: IntegrationStatus): string {
+  const confLine = integrations
+    ? (integrations.confluence.connected
+        ? `- Confluence: connected${integrations.confluence.spaceKey ? ` (space: ${integrations.confluence.spaceKey})` : ''}`
+        : `- Confluence: not configured (confluence_import tool unavailable)`)
+    : null
+  const jiraLine = integrations
+    ? (integrations.jira.connected
+        ? `- Jira: connected${integrations.jira.projectKey ? ` (project: ${integrations.jira.projectKey})` : ''}`
+        : `- Jira: not configured (jira_import tool unavailable)`)
+    : null
+
   return (
     `You are a vault refinement agent. The refinement manual below is a set of binding rules you must follow.\n` +
     `Use the rules and criteria specified in the manual as the top priority for all decisions.\n` +
@@ -65,7 +98,8 @@ function buildAgentSystemPrompt(manual: string, vaultPath?: string | null): stri
     manual +
     `\n===== End of Manual =====\n\n` +
     `Today's date: ${formatLocalDate()}` +
-    (vaultPath ? `\nCurrent vault path: ${vaultPath}` : '')
+    (vaultPath ? `\nCurrent vault path: ${vaultPath}` : '') +
+    (confLine && jiraLine ? `\n\nConnected external services:\n${confLine}\n${jiraLine}` : '')
   )
 }
 
@@ -102,11 +136,17 @@ function parseRefinementResponse(raw: string): RefinementResult | null {
   let parsed: unknown
   const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/)
   if (jsonMatch) {
-    try { parsed = JSON.parse(jsonMatch[1].trim()) } catch { return null }
+    try { parsed = JSON.parse(jsonMatch[1].trim()) } catch (e) {
+      logger.warn('[EditAgent] JSON parse failed (code block):', e instanceof Error ? e.message : String(e), raw.slice(0, 120))
+      return null
+    }
   } else {
     const bare = raw.trim()
     if (!bare.startsWith('{')) return null
-    try { parsed = JSON.parse(bare) } catch { return null }
+    try { parsed = JSON.parse(bare) } catch (e) {
+      logger.warn('[EditAgent] JSON parse failed (bare):', e instanceof Error ? e.message : String(e), raw.slice(0, 120))
+      return null
+    }
   }
   // Field-level validation
   if (!parsed || typeof parsed !== 'object') return null
@@ -154,8 +194,9 @@ export async function runEditAgentCycle(): Promise<boolean> {
 }
 
 async function _runEditAgentCycleInner(): Promise<boolean> {
-  const { vaultPath } = useVaultStore.getState()
+  const { vaultPath, activeVaultId } = useVaultStore.getState()
   const { editAgentConfig } = useSettingsStore.getState()
+  const integrations = activeVaultId ? buildIntegrationStatus(activeVaultId) : undefined
   const store = useEditAgentStore.getState()
 
   if (!vaultPath || !window.vaultAPI) {
@@ -216,7 +257,7 @@ async function _runEditAgentCycleInner(): Promise<boolean> {
       try {
         await streamMessageRaw(
           editAgentConfig.modelId,
-          buildAgentSystemPrompt(editAgentConfig.refinementManual, vaultPath),
+          buildSystemPrompt(editAgentConfig.refinementManual, vaultPath, integrations),
           [{ role: 'user', content: prompt }],
           (chunk) => { rawResponse += chunk },
         )
@@ -265,6 +306,25 @@ async function _runEditAgentCycleInner(): Promise<boolean> {
     store.setPendingQueue([])
     store.setProcessingFile(null)
 
+    // Confluence / Jira sync (if enabled in settings)
+    try {
+      const { runConfluenceSync, runJiraSync } = await import('@/services/syncRunner')
+      if (editAgentConfig.syncConfluence && typeof runConfluenceSync === 'function') await runConfluenceSync(store)
+      if (editAgentConfig.syncJira && typeof runJiraSync === 'function') await runJiraSync(store)
+    } catch {
+      // syncRunner may not export these functions yet — non-fatal
+    }
+
+    // Quality check (if edits were made or sync ran)
+    try {
+      const { runQualityCheck } = await import('@/services/syncRunner')
+      if (editedCount > 0 || editAgentConfig.syncConfluence || editAgentConfig.syncJira) {
+        await runQualityCheck(vaultPath, store)
+      }
+    } catch {
+      // non-fatal
+    }
+
     const doneMsg = `Cycle complete — processed: ${processedCount}, edited: ${editedCount}`
     store.addLog({ action: 'done', detail: doneMsg })
     await appendLogToFile(vaultPath, {
@@ -288,13 +348,13 @@ async function _runEditAgentCycleInner(): Promise<boolean> {
 
 // ── Edit Agent Tool Definitions ───────────────────────────────────────────────
 
-const EDIT_AGENT_TOOLS = [
+export const EDIT_AGENT_TOOLS = [
   {
     name: 'list_directory',
     description: 'Returns the file and folder list of a directory.',
     input_schema: {
       type: 'object' as const,
-      properties: { path: { type: 'string', description: 'Absolute path to query' } },
+      properties: { path: { type: 'string', description: 'Absolute path to query — must start with vault path from system prompt' } },
       required: ['path'],
     },
   },
@@ -303,7 +363,7 @@ const EDIT_AGENT_TOOLS = [
     description: 'Reads and returns file content.',
     input_schema: {
       type: 'object' as const,
-      properties: { path: { type: 'string', description: 'Absolute path of the file to read' } },
+      properties: { path: { type: 'string', description: 'Absolute path of the file to read — must start with vault path from system prompt' } },
       required: ['path'],
     },
   },
@@ -313,7 +373,7 @@ const EDIT_AGENT_TOOLS = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        path: { type: 'string', description: 'Absolute path of the file to save' },
+        path: { type: 'string', description: 'Absolute path of the file to save — must start with vault path from system prompt' },
         content: { type: 'string', description: 'Markdown content to save' },
       },
       required: ['path', 'content'],
@@ -325,7 +385,7 @@ const EDIT_AGENT_TOOLS = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        path: { type: 'string', description: 'Absolute path of the file to rename' },
+        path: { type: 'string', description: 'Absolute path of the file to rename — must start with vault path from system prompt' },
         new_name: { type: 'string', description: 'New filename (with extension, no path)' },
       },
       required: ['path', 'new_name'],
@@ -336,7 +396,7 @@ const EDIT_AGENT_TOOLS = [
     description: 'Deletes a file. Use with caution.',
     input_schema: {
       type: 'object' as const,
-      properties: { path: { type: 'string', description: 'Absolute path of the file to delete' } },
+      properties: { path: { type: 'string', description: 'Absolute path of the file to delete — must start with vault path from system prompt' } },
       required: ['path'],
     },
   },
@@ -345,7 +405,7 @@ const EDIT_AGENT_TOOLS = [
     description: 'Creates a new folder.',
     input_schema: {
       type: 'object' as const,
-      properties: { path: { type: 'string', description: 'Absolute path of the folder to create' } },
+      properties: { path: { type: 'string', description: 'Absolute path of the folder to create — must start with vault path from system prompt' } },
       required: ['path'],
     },
   },
@@ -367,7 +427,7 @@ const EDIT_AGENT_TOOLS = [
 Available scripts: normalize_frontmatter.py, enhance_wikilinks.py, inject_keywords.py,
 gen_year_hubs.py, gen_index.py, check_quality.py, check_outdated.py, check_links.py,
 md_normalize.py, strengthen_links.py, split_large_docs.py, scan_cleanup.py, audit_and_fix.py,
-pdf_import.py
+pdf_import.py, convert_jira.py, gen_jira_index.py, crosslink_jira.py
 Example args: ["/path/to/vault/active", "--verbose"]`,
     input_schema: {
       type: 'object' as const,
@@ -404,6 +464,58 @@ Example args: ["/path/to/vault/active", "--verbose"]`,
     },
   },
   {
+    name: 'confluence_import',
+    description: 'Imports pages from Confluence, converts to Markdown and saves to vault. Uses configured Confluence credentials.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        space_key: { type: 'string', description: 'Space key (uses configured value if omitted)' },
+        page_title: { type: 'string', description: 'Title search filter (all pages if omitted)' },
+        max_pages: { type: 'number', description: 'Maximum page count (default 20)' },
+        target_folder: { type: 'string', description: 'Save folder path (default: configured value)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'confluence_write',
+    description: `Creates a new Confluence page or updates an existing one.
+
+Workflow:
+  1. mode="create": title, content(Markdown) required. space_key uses configured value if omitted.
+  2. mode="update": page_id_or_url required. Fetches current version internally before updating.
+  3. content is written in Markdown and automatically converted to Confluence Storage format.
+
+Use cases:
+  - Publish meeting notes, weekly reports, specs directly from vault content
+  - Add new sections to existing pages (mode=update)`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        mode:            { type: 'string', description: '"create" (new) or "update" (modify existing). Default: "create"' },
+        title:           { type: 'string', description: 'Page title' },
+        content:         { type: 'string', description: 'Markdown page content (auto-converted)' },
+        space_key:       { type: 'string', description: 'Confluence space key (uses configured value if omitted)' },
+        parent_id:       { type: 'string', description: 'Parent page ID or URL (optional for create)' },
+        page_id_or_url:  { type: 'string', description: 'Page ID or URL to modify (required for update)' },
+      },
+      required: ['title', 'content'],
+    },
+  },
+  {
+    name: 'jira_import',
+    description: 'Imports issues from Jira, converts to Markdown and saves to vault. Uses configured Jira credentials.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        jql: { type: 'string', description: 'JQL query (uses configured value if omitted)' },
+        max_issues: { type: 'number', description: 'Maximum issue count (default 50)' },
+        target_folder: { type: 'string', description: 'Save folder path (default: configured value)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'pdf_import',
     description: 'Converts a PDF file to Markdown and saves it to the vault. Based on opendataloader-pdf (benchmark #1). Processes single PDF or entire folder.',
     input_schema: {
@@ -416,18 +528,162 @@ Example args: ["/path/to/vault/active", "--verbose"]`,
       required: ['pdf_path'],
     },
   },
+  {
+    name: 'jira_get_members',
+    description: `Fetches assignable members for the Jira project.
+Check vault's jira-members.md first; use this tool when the file is missing or you need fresh data.
+Returns: [{accountId, displayName, email}] — use accountId for jira_dispatch's assignee_account_id.`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'jira_dispatch',
+    description: `Creates a new Jira issue.
+Workflow:
+  1. Read jira-members.md via read_file to get team member accountIds
+  2. If missing, fetch via jira_get_members
+  3. Create issue via jira_dispatch
+
+Assignee uses Jira login username as assignee_account_id.
+Component is read from jira-members.md component field.`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        summary:             { type: 'string', description: 'Issue title' },
+        description:         { type: 'string', description: 'Issue description (detailed content)' },
+        assignee_account_id: { type: 'string', description: 'Assignee Jira username. Check jira-members.md or jira_get_members.' },
+        issuetype_id:        { type: 'string', description: 'Issue type ID (default: 10401=Task)' },
+        component:           { type: 'string', description: 'Component name. Refer to jira-members.md component field.' },
+      },
+      required: ['summary'],
+    },
+  },
+  {
+    name: 'jira_sprint_move',
+    description: `Moves an existing Jira issue to the active sprint.
+If sprint_id is not specified, automatically finds the active sprint.
+Use when a jira_dispatch-created issue is not in a sprint.`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        issue_key: { type: 'string', description: 'Issue key (e.g. PROJ-123)' },
+        sprint_id: { type: 'number', description: 'Sprint ID (auto-detects active sprint if omitted)' },
+      },
+      required: ['issue_key'],
+    },
+  },
 ] as const
+
+// ── Markdown → Confluence Storage XML ─────────────────────────────────────────
+
+function mdToConfluenceStorage(md: string): string {
+  if (!md) return ''
+  const lines = md.split('\n')
+  const out: string[] = []
+  let inCode = false
+  let codeLang = ''
+  let codeLines: string[] = []
+
+  const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const inlineStyle = (s: string) =>
+    s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+     .replace(/\*(.+?)\*/g, '<em>$1</em>')
+     .replace(/`(.+?)`/g, '<code>$1</code>')
+     .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>')
+
+  for (const raw of lines) {
+    const line = raw
+
+    // Code block open/close
+    if (line.startsWith('```')) {
+      if (!inCode) {
+        inCode = true
+        codeLang = line.slice(3).trim() || 'none'
+        codeLines = []
+      } else {
+        inCode = false
+        out.push(`<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">${codeLang}</ac:parameter><ac:plain-text-body><![CDATA[${codeLines.join('\n')}]]></ac:plain-text-body></ac:structured-macro>`)
+      }
+      continue
+    }
+    if (inCode) { codeLines.push(line); continue }
+
+    // Headings
+    const hm = line.match(/^(#{1,6})\s+(.*)/)
+    if (hm) { out.push(`<h${hm[1].length}>${inlineStyle(escXml(hm[2]))}</h${hm[1].length}>`); continue }
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) { out.push('<hr/>'); continue }
+
+    // Lists
+    const ulm = line.match(/^(\s*)[-*]\s+(.*)/)
+    if (ulm) { out.push(`<ul><li>${inlineStyle(escXml(ulm[2]))}</li></ul>`); continue }
+    const olm = line.match(/^(\s*)\d+\.\s+(.*)/)
+    if (olm) { out.push(`<ol><li>${inlineStyle(escXml(olm[2]))}</li></ol>`); continue }
+
+    // Empty line
+    if (line.trim() === '') { out.push(''); continue }
+
+    // Normal paragraph
+    out.push(`<p>${inlineStyle(escXml(line))}</p>`)
+  }
+  return out.join('\n')
+}
+
+// ── HTML → Markdown (for Confluence API responses) ───────────────────────────
+
+function htmlToMarkdown(html: string): string {
+  if (!html) return ''
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  doc.querySelectorAll('script, style, nav').forEach(el => el.remove())
+
+  function processNode(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+    const el = node as Element
+    const tag = el.tagName.toLowerCase()
+    const children = Array.from(el.childNodes).map(processNode).join('')
+    switch (tag) {
+      case 'h1': return `# ${children}\n\n`
+      case 'h2': return `## ${children}\n\n`
+      case 'h3': return `### ${children}\n\n`
+      case 'h4': return `#### ${children}\n\n`
+      case 'p': return `${children}\n\n`
+      case 'br': return '\n'
+      case 'strong': case 'b': return `**${children}**`
+      case 'em': case 'i': return `*${children}*`
+      case 'code': return `\`${children}\``
+      case 'pre': return `\`\`\`\n${children}\n\`\`\`\n\n`
+      case 'ul': case 'ol': return children + '\n'
+      case 'li': return `- ${children.trim()}\n`
+      case 'a': return `[${children}](${el.getAttribute('href') ?? ''})`
+      case 'hr': return '---\n\n'
+      case 'blockquote': return `> ${children}\n\n`
+      case 'th': return `| **${children.trim()}** `
+      case 'td': return `| ${children.trim()} `
+      case 'tr': return children + '|\n'
+      case 'table': return children + '\n'
+      default: return children
+    }
+  }
+  return processNode(doc.body).replace(/\n{3,}/g, '\n\n').trim()
+}
 
 // ── Path safety ───────────────────────────────────────────────────────────────
 
 function isInsideVault(targetPath: string, vaultPath: string): boolean {
-  const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  return normalize(targetPath).startsWith(normalize(vaultPath))
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const t = norm(targetPath)
+  const v = norm(vaultPath)
+  return t === v || t.startsWith(v + '/')
 }
 
 // ── Tool Executor ─────────────────────────────────────────────────────────────
 
-async function executeAgentTool(
+export async function executeAgentTool(
   name: string,
   input: Record<string, unknown>,
   vaultPath: string,
@@ -477,8 +733,9 @@ async function executeAgentTool(
         return r?.success ? `Move complete: ${r.newPath}` : 'Move failed'
       }
       case 'run_python_tool': {
-        if (!window.toolsAPI) return 'Error: toolsAPI unavailable (Electron only)'
-        const r = await window.toolsAPI.runVaultTool(
+        const toolsAPI = window.toolsAPI
+        if (!toolsAPI) return 'Error: toolsAPI unavailable (Electron only)'
+        const r = await toolsAPI.runVaultTool(
           input.script_name as string,
           (input.args as string[] | undefined) ?? [],
         )
@@ -496,6 +753,212 @@ async function executeAgentTool(
         const args = (input.args as string[] | undefined) ?? []
         const r = await gstackExecute(cmd, args)
         return r.success ? r.output : `Error: ${r.error}`
+      }
+
+      case 'confluence_import': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { confluenceConfigs } = useSettingsStore.getState()
+        const cfg = confluenceConfigs[activeVaultId] ?? confluenceConfigs['__migrated__']
+        if (!cfg?.baseUrl) return 'Error: Confluence not configured — check Settings > Confluence'
+        if (!window.confluenceAPI) return 'Error: confluenceAPI unavailable (Electron only)'
+        const spaceKey = (input.space_key as string | undefined) || cfg.spaceKey || ''
+        if (!spaceKey) return 'Error: No Space Key — set it in Settings > Confluence'
+        const maxPages = (input.max_pages as number | undefined) ?? 20
+        const targetFolder = (input.target_folder as string | undefined) ?? cfg.targetFolder ?? 'confluence'
+        // IPC route — Electron net.fetch (no CORS)
+        const pages: Array<Record<string, unknown>> = await window.confluenceAPI.fetchPages({
+          baseUrl: cfg.baseUrl, authType: cfg.authType, email: cfg.email,
+          apiToken: cfg.apiToken, spaceKey, bypassSSL: cfg.bypassSSL,
+          dateFrom: cfg.dateFrom || '2025-01-01',
+        })
+        const filtered = (input.page_title as string | undefined)
+          ? pages.filter(p => String(p['title'] ?? '').toLowerCase().includes((input.page_title as string).toLowerCase()))
+          : pages
+        const toProcess = filtered.slice(0, maxPages)
+        const results: string[] = []
+        for (const page of toProcess) {
+          try {
+            const title = String(page['title'] ?? '')
+            const history = page['history'] as Record<string, unknown> | undefined
+            const lastUpdated = history?.['lastUpdated'] as Record<string, string> | undefined
+            const created = String(history?.['createdDate'] ?? '').split('T')[0]
+            const modified = String(lastUpdated?.['when'] ?? '').split('T')[0]
+            const body = page['body'] as Record<string, unknown> | undefined
+            const viewHtml = (body?.['view'] as Record<string, string> | undefined)?.['value'] ?? ''
+            const md = htmlToMarkdown(viewHtml)
+            const fm = `---\ntitle: "${title.replace(/"/g, "'")}"\ncreated: ${created}\nmodified: ${modified}\nsource: confluence\ntags: [confluence]\n---\n\n`
+            const filename = title.replace(/[<>:"/\\|?*]/g, '_') + '.md'
+            const r = await window.vaultAPI?.saveFile(`${vaultPath}/${targetFolder}/${filename}`, fm + md)
+            results.push(r?.success ? `OK ${filename}` : `FAIL ${filename} (save failed)`)
+          } catch (e) {
+            results.push(`FAIL ${page['title']}: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        }
+        return `Confluence import complete (${results.length})\n${results.join('\n')}`
+      }
+
+      case 'confluence_write': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { confluenceConfigs } = useSettingsStore.getState()
+        const cfg = confluenceConfigs[activeVaultId] ?? confluenceConfigs['__migrated__']
+        if (!cfg?.baseUrl || !cfg?.apiToken) return 'Error: Confluence not configured — check Settings > Confluence'
+        if (!window.confluenceAPI) return 'Error: confluenceAPI unavailable (Electron only)'
+
+        const mode = (input.mode as string) || 'create'
+        const title = input.title as string
+        const markdown = input.content as string
+        const storageBody = mdToConfluenceStorage(markdown)
+        const confCfg = {
+          baseUrl: cfg.baseUrl, authType: cfg.authType, email: cfg.email,
+          apiToken: cfg.apiToken, spaceKey: cfg.spaceKey, bypassSSL: cfg.bypassSSL,
+        }
+
+        if (mode === 'update') {
+          const pageIdOrUrl = input.page_id_or_url as string
+          if (!pageIdOrUrl) return 'Error: page_id_or_url required for mode=update'
+          const info = await window.confluenceAPI.getPageInfo(confCfg, pageIdOrUrl)
+          const result = await window.confluenceAPI.updatePage(confCfg, {
+            pageId: info.id, title, storageBody, currentVersion: info.version,
+          })
+          return `Confluence page updated: ${title} — ${result.url}`
+        } else {
+          const result = await window.confluenceAPI.createPage(confCfg, {
+            title, storageBody,
+            spaceKey: (input.space_key as string) || cfg.spaceKey,
+            parentId: (input.parent_id as string) || undefined,
+          })
+          return `Confluence page created: ${title} — ${result.url}`
+        }
+      }
+
+      case 'jira_import': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { jiraConfigs } = useSettingsStore.getState()
+        const cfg = jiraConfigs[activeVaultId]
+        if (!cfg?.baseUrl) return 'Error: Jira not configured — check Settings > Jira'
+        if (!window.jiraAPI) return 'Error: jiraAPI unavailable (Electron only)'
+        const jql = (input.jql as string | undefined) || cfg.jql || (cfg.projectKey ? `project = ${cfg.projectKey}` : '')
+        if (!jql) return 'Error: No JQL query — provide jql parameter or set projectKey/jql in settings'
+        const maxIssues = (input.max_issues as number | undefined) ?? 50
+        const targetFolder = (input.target_folder as string | undefined) ?? cfg.targetFolder ?? 'jira'
+        // IPC route — Electron net.fetch (no CORS)
+        const issues: Array<Record<string, unknown>> = await window.jiraAPI.fetchIssues({
+          baseUrl: cfg.baseUrl, authType: cfg.authType, email: cfg.email,
+          apiToken: cfg.apiToken, projectKey: cfg.projectKey, jql,
+          bypassSSL: cfg.bypassSSL, dateFrom: cfg.dateFrom || '2025-01-01',
+        })
+        const data = { issues: issues.slice(0, maxIssues), total: issues.length }
+        const results: string[] = []
+        for (const issue of data.issues) {
+          const f = issue['fields'] as Record<string, unknown>
+          const key = String(issue['key'])
+          const summary = String(f['summary'] ?? '')
+          const status = (f['status'] as Record<string, string> | undefined)?.['name'] ?? ''
+          const assignee = (f['assignee'] as Record<string, string> | undefined)?.['displayName'] ?? ''
+          const priority = (f['priority'] as Record<string, string> | undefined)?.['name'] ?? ''
+          const issueType = (f['issuetype'] as Record<string, string> | undefined)?.['name'] ?? ''
+          const created = String(f['created'] ?? '').split('T')[0]
+          const updated = String(f['updated'] ?? '').split('T')[0]
+          const labels = (f['labels'] as string[] | undefined) ?? []
+          const description = String(f['description'] ?? '')
+          const fm = [
+            '---',
+            `title: "${key}: ${summary.replace(/"/g, "'")}"`,
+            `jira_key: ${key}`, `status: ${status}`, `type: ${issueType}`,
+            `priority: ${priority}`, assignee ? `assignee: ${assignee}` : '',
+            `created: ${created}`, `modified: ${updated}`,
+            `tags: [jira${labels.map(l => `, ${l}`).join('')}]`, 'source: jira', '---', '',
+          ].filter(Boolean).join('\n')
+          const body = `# ${key}: ${summary}\n\n**Status**: ${status} | **Type**: ${issueType} | **Priority**: ${priority}\n\n`
+            + (description ? `## Description\n\n${description}\n` : '')
+          const filename = `${key} ${summary.replace(/[<>:"/\\|?*]/g, '_').slice(0, 60)}.md`
+          try {
+            const r = await window.vaultAPI?.saveFile(`${vaultPath}/${targetFolder}/${filename}`, fm + body)
+            results.push(r?.success ? `OK ${key}` : `FAIL ${key} (save failed)`)
+          } catch (e) {
+            results.push(`FAIL ${key}: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        }
+        return `Jira import complete — ${results.length} of ${data.total} processed\n${results.join('\n')}`
+      }
+
+      case 'jira_get_members': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { jiraConfigs } = useSettingsStore.getState()
+        const cfg = jiraConfigs[activeVaultId] ?? jiraConfigs['__migrated__']
+        if (!cfg?.baseUrl || !cfg?.apiToken) return 'Error: Jira not configured — check Settings > Jira'
+        if (!window.jiraAPI) return 'Error: jiraAPI unavailable (Electron only)'
+        const members = await window.jiraAPI.getMembers({
+          baseUrl: cfg.baseUrl, authType: cfg.authType, email: cfg.email,
+          apiToken: cfg.apiToken, projectKey: cfg.projectKey, bypassSSL: cfg.bypassSSL,
+        })
+        return JSON.stringify(members, null, 2)
+      }
+
+      case 'jira_dispatch': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { jiraConfigs } = useSettingsStore.getState()
+        const cfg = jiraConfigs[activeVaultId] ?? jiraConfigs['__migrated__']
+        if (!cfg?.baseUrl || !cfg?.apiToken) return 'Error: Jira not configured — check Settings > Jira'
+        if (!window.jiraAPI) return 'Error: jiraAPI unavailable (Electron only)'
+        const result = await window.jiraAPI.createIssue(
+          {
+            baseUrl: cfg.baseUrl, authType: cfg.authType, email: cfg.email,
+            apiToken: cfg.apiToken, projectKey: cfg.projectKey, bypassSSL: cfg.bypassSSL,
+          },
+          {
+            summary: input.summary as string,
+            description: (input.description as string) ?? '',
+            issuetype: (input.issuetype_id as string) || '10401',
+            assigneeAccountId: (input.assignee_account_id as string) || undefined,
+            component: (input.component as string) || undefined,
+          },
+        )
+        return `Jira issue created: ${result.key} — ${result.url}`
+      }
+
+      case 'jira_sprint_move': {
+        const { activeVaultId } = useVaultStore.getState()
+        const { jiraConfigs } = useSettingsStore.getState()
+        const cfg = jiraConfigs[activeVaultId] ?? jiraConfigs['__migrated__']
+        if (!cfg?.baseUrl || !cfg?.apiToken) return 'Error: Jira not configured — check Settings > Jira'
+        const issueKey = input.issue_key as string
+        if (!issueKey) return 'Error: issue_key required'
+
+        const base = cfg.baseUrl.replace(/\/+$/, '')
+        const authType = cfg.authType ?? 'server_basic'
+        const authHeader = authType === 'server_pat'
+          ? `Bearer ${cfg.apiToken}`
+          : 'Basic ' + btoa(`${cfg.email}:${cfg.apiToken}`)
+        const headers = { Authorization: authHeader, 'Content-Type': 'application/json', Accept: 'application/json' }
+        const agileBase = `${base}/rest/agile/1.0`
+
+        let sprintId = input.sprint_id as number | undefined
+        if (!sprintId) {
+          const boardId = (cfg as unknown as Record<string, unknown>).boardId as number | undefined
+          let resolvedBoardId = boardId
+          if (!resolvedBoardId) {
+            const boardRes = await fetch(`${agileBase}/board?projectKeyOrId=${encodeURIComponent(cfg.projectKey)}&type=scrum&maxResults=10`, { headers })
+            if (boardRes.ok) {
+              const bd = await boardRes.json() as { values?: { id: number }[] }
+              resolvedBoardId = bd?.values?.[0]?.id
+            }
+          }
+          if (resolvedBoardId) {
+            const sprintRes = await fetch(`${agileBase}/board/${resolvedBoardId}/sprint?state=active&maxResults=1`, { headers })
+            if (sprintRes.ok) {
+              const sd = await sprintRes.json() as { values?: { id: number }[] }
+              sprintId = sd?.values?.[0]?.id
+            }
+          }
+        }
+        if (!sprintId) return 'Error: could not find active sprint'
+
+        const res = await fetch(`${agileBase}/sprint/${sprintId}/issue`, {
+          method: 'POST', headers, body: JSON.stringify({ issues: [issueKey] }),
+        })
+        if (!res.ok && res.status !== 204) return `Error: Sprint move failed (${res.status})`
+        return `Sprint assignment complete: ${issueKey} -> sprint ${sprintId}`
       }
 
       case 'pdf_import': {
@@ -560,7 +1023,8 @@ type AgentMsg =
  */
 export async function sendEditAgentChatMessage(userMessage: string): Promise<void> {
   const { editAgentConfig } = useSettingsStore.getState()
-  const { vaultPath } = useVaultStore.getState()
+  const { vaultPath, activeVaultId } = useVaultStore.getState()
+  const integrations = activeVaultId ? buildIntegrationStatus(activeVaultId) : undefined
   const store = useEditAgentStore.getState()
   const apiKey = getApiKey('anthropic')
 
@@ -588,7 +1052,7 @@ export async function sendEditAgentChatMessage(userMessage: string): Promise<voi
     try {
       await streamMessageRaw(
         editAgentConfig.modelId,
-        buildAgentSystemPrompt(editAgentConfig.refinementManual, vaultPath),
+        buildSystemPrompt(editAgentConfig.refinementManual, vaultPath, integrations),
         [...historyForRaw, { role: 'user' as const, content: userMessage }],
         (chunk) => { useEditAgentStore.getState().appendStreamChunk(msgId, chunk) },
       )
@@ -601,7 +1065,7 @@ export async function sendEditAgentChatMessage(userMessage: string): Promise<voi
     return
   }
 
-  const systemPrompt = buildAgentSystemPrompt(editAgentConfig.refinementManual, vaultPath)
+  const systemPrompt = buildSystemPrompt(editAgentConfig.refinementManual, vaultPath, integrations)
 
   const messages: AgentMsg[] = [...historyForApi, { role: 'user', content: userMessage }]
   const MAX_ITERATIONS = 30
@@ -619,7 +1083,7 @@ export async function sendEditAgentChatMessage(userMessage: string): Promise<voi
           },
           body: JSON.stringify({
             model: editAgentConfig.modelId,
-            max_tokens: 8096,
+            max_tokens: AGENT_MAX_OUTPUT_TOKENS,
             system: systemPrompt,
             tools: EDIT_AGENT_TOOLS,
             messages,
@@ -646,7 +1110,7 @@ export async function sendEditAgentChatMessage(userMessage: string): Promise<voi
       // Track usage
       if (data.usage) {
         useUsageStore.getState().recordUsage(
-          editAgentConfig.modelId, data.usage.input_tokens, data.usage.output_tokens,
+          editAgentConfig.modelId, data.usage.input_tokens, data.usage.output_tokens, 'editAgent',
         )
       }
 

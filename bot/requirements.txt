@@ -1,0 +1,6 @@
+PyYAML>=6.0
+slack-bolt>=1.18
+slack-sdk>=3.26
+Pillow>=10.0
+python-dotenv>=1.0
+pdfkit>=1.0

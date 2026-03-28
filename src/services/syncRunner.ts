@@ -1,4 +1,3 @@
-// TODO: Wire up — currently not imported by any consumer
 /**
  * syncRunner.ts — Generic sync orchestration framework.
  *
@@ -6,7 +5,6 @@
  * Called from the Edit Agent wake cycle or other sync workflows.
  */
 
-import { useVaultStore } from '@/stores/vaultStore'
 import { logger } from '@/lib/logger'
 import type { EditAgentState } from '@/stores/editAgentStore'
 
@@ -15,17 +13,6 @@ type ScriptAPI = { runScript?: (n: string, a: string[]) => Promise<ScriptResult>
 
 function getScriptAPI(): ScriptAPI | undefined {
   return window.confluenceAPI as ScriptAPI | undefined
-}
-
-/**
- * Run post-sync scripts defined in the script configuration.
- * Each script receives the vault path as argument.
- */
-export async function runPostSyncScripts(vaultPath: string, store: EditAgentState): Promise<void> {
-  const api = getScriptAPI()
-  if (typeof api?.runScript !== 'function') return
-  // Post-sync script execution placeholder
-  // Add custom scripts here as needed
 }
 
 /**
@@ -52,16 +39,8 @@ export async function runQualityCheck(vaultPath: string, store: EditAgentState):
   }
 }
 
-/**
- * Generic notification helper for sync completion events.
- */
-export function notifySyncComplete(
-  source: string,
-  count: number,
-  store: EditAgentState,
-): void {
-  store.addLog({
-    action: 'file_edit',
-    detail: `${source}: ${count} items synced`,
-  })
-}
+/** Stub: Confluence sync (not yet implemented) */
+export async function runConfluenceSync(..._args: any[]) { /* no-op */ }
+
+/** Stub: Jira sync (not yet implemented) */
+export async function runJiraSync(..._args: any[]) { /* no-op */ }

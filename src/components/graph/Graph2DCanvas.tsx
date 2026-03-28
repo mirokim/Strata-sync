@@ -4,6 +4,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useGraphSimulation, type SimNode, type SimLink } from '@/hooks/useGraphSimulation'
 import { buildNodeColorMap, getNodeColor, lightenColor, degreeScaleFactor, degreeSize, DEGREE_LIGHT_MAX } from '@/lib/nodeColors'
+import { LABEL_MIN_GAP, GRAPH_VIEW_PADDING } from '@/lib/constants'
 import type { GraphNode } from '@/types'
 import NodeTooltip from './NodeTooltip'
 
@@ -22,7 +23,7 @@ function getCSSVar(name: string, fallback: string): string {
  * Renders once after simulation completes; redraws only on view/selection changes.
  */
 export default function Graph2DCanvas({ width, height }: Props) {
-  const { nodes, links, selectedNodeId, physics, setSelectedNode, setGraphLayoutReady } = useGraphStore()
+  const { nodes, links, selectedNodeId, focusNodeId, setFocusNode, physics, setSelectedNode, setGraphLayoutReady, degreeMap, maxDegree } = useGraphStore()
   const { nodeColorMode, setSelectedDoc, openInEditor } = useUIStore()
   const showNodeLabels = useSettingsStore(s => s.showNodeLabels)
   const tagColors = useSettingsStore(s => s.tagColors)
@@ -59,20 +60,11 @@ export default function Graph2DCanvas({ width, height }: Props) {
     nodeMapRef.current = new Map(nodes.map(n => [n.id, n]))
   }, [nodes])
 
-  // Degree map — rebuilt when links change (for Obsidian-style sizing)
-  const degreeMapRef = useRef<Map<string, number>>(new Map())
-  const maxDegreeRef = useRef(1)
-  useEffect(() => {
-    const map = new Map<string, number>()
-    for (const l of links) {
-      const s = typeof l.source === 'string' ? l.source : (l.source as { id: string }).id
-      const t = typeof l.target === 'string' ? l.target : (l.target as { id: string }).id
-      map.set(s, (map.get(s) ?? 0) + 1)
-      map.set(t, (map.get(t) ?? 0) + 1)
-    }
-    degreeMapRef.current = map
-    maxDegreeRef.current = Math.max(1, ...map.values())
-  }, [links])
+  // Degree map — sourced from graphStore (computed atomically in setLinks)
+  const degreeMapRef = useRef(degreeMap)
+  degreeMapRef.current = degreeMap
+  const maxDegreeRef = useRef(maxDegree)
+  maxDegreeRef.current = maxDegree
 
   // ── Draw everything to canvas ───────────────────────────────────────────────
   const drawCanvas = useCallback(() => {
@@ -96,19 +88,32 @@ export default function Graph2DCanvas({ width, height }: Props) {
     ctx.translate(tx, ty)
     ctx.scale(scale, scale)
 
-    // ── Links (single batched path — all same style) ────────────────────────
-    ctx.strokeStyle = getCSSVar('--color-border', '#333')
-    ctx.lineWidth = 1 / scale
-    ctx.globalAlpha = physicsRef.current.linkOpacity
-    ctx.beginPath()
-    for (const link of simLinks) {
-      const src = link.source as SimNode
-      const tgt = link.target as SimNode
-      if (src?.x == null || tgt?.x == null) continue
-      ctx.moveTo(src.x, src.y)
-      ctx.lineTo(tgt.x, tgt.y)
+    // ── Links (batched by strength bucket: weak / medium / strong) ──────────
+    const linkBase = physicsRef.current.linkOpacity
+    const edgeColor = getCSSVar('--color-border', '#333')
+    const BUCKETS = [
+      { maxStrength: 0.35, lineWidth: 0.6 / scale, alpha: linkBase * 0.55 },
+      { maxStrength: 0.7,  lineWidth: 1.0 / scale, alpha: linkBase * 0.85 },
+      { maxStrength: 1.01, lineWidth: 1.8 / scale, alpha: linkBase * 1.0  },
+    ]
+    for (const bucket of BUCKETS) {
+      ctx.strokeStyle = edgeColor
+      ctx.lineWidth = bucket.lineWidth
+      ctx.globalAlpha = Math.min(1, bucket.alpha)
+      ctx.beginPath()
+      for (const link of simLinks) {
+        const s = (link.strength ?? 0.5)
+        if (bucket === BUCKETS[0] && s >= 0.35) continue
+        if (bucket === BUCKETS[1] && (s < 0.35 || s >= 0.7)) continue
+        if (bucket === BUCKETS[2] && s < 0.7) continue
+        const src = link.source as SimNode
+        const tgt = link.target as SimNode
+        if (src?.x == null || tgt?.x == null) continue
+        ctx.moveTo(src.x, src.y)
+        ctx.lineTo(tgt.x, tgt.y)
+      }
+      ctx.stroke()
     }
-    ctx.stroke()
 
     // ── Nodes ───────────────────────────────────────────────────────────────
     const degreeMap = degreeMapRef.current
@@ -129,7 +134,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
       ctx.fillStyle = lightFactor > 0.01 ? lightenColor(color, lightFactor) : color
 
       if (nodeData.isImage) {
-        // Image node: diamond shape
+        // 이미지 노드: 다이아몬드(마름모) 형태
         const r = isSelected ? nr + 2 : Math.max(nr - 1, 2)
         ctx.save()
         ctx.translate(simNode.x, simNode.y)
@@ -175,7 +180,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
 
       // Density-aware culling: minimum screen-space gap between label centers
       // At low zoom, only draw labels for selected node + high-degree hubs
-      const MIN_SCREEN_GAP = 64  // px between label positions on screen
+      const MIN_SCREEN_GAP = LABEL_MIN_GAP  // px between label positions on screen
       const drawnScreenPos: Array<{ sx: number; sy: number }> = []
       const maxDeg = maxDegreeRef.current
 
@@ -226,7 +231,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
     }
     const graphW = Math.max(maxX - minX, 100)
     const graphH = Math.max(maxY - minY, 100)
-    const padding = 48
+    const padding = GRAPH_VIEW_PADDING
     const scale = Math.min((width - padding * 2) / graphW, (height - padding * 2) / graphH, 2)
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
@@ -253,6 +258,22 @@ export default function Graph2DCanvas({ width, height }: Props) {
     // drawCanvas is stable (only changes with width/height), listed deps are the triggers
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNodeId, showNodeLabels, nodeColorMode, nodeColorMap, physics.nodeRadius, links])
+
+  // ── Focus node: pan + zoom to the target node ───────────────────────────────
+  useEffect(() => {
+    if (!focusNodeId) return
+    const target = cachedSimNodesRef.current.find(n => n.id === focusNodeId)
+    if (!target || target.x == null || target.y == null) return
+    const targetScale = Math.min(Math.max(viewRef.current.scale, 1.5), 3)
+    viewRef.current = {
+      x: width / 2 - target.x * targetScale,
+      y: height / 2 - target.y * targetScale,
+      scale: targetScale,
+    }
+    drawCanvas()
+    setFocusNode(null)  // 소비 후 리셋
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNodeId])
 
   // ── Wheel zoom ───────────────────────────────────────────────────────────────
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -322,7 +343,13 @@ export default function Graph2DCanvas({ width, height }: Props) {
     const node = hitTest(e.clientX, e.clientY)
     if (node) {
       setSelectedNode(node.id)
-      setTooltip({ nodeId: node.id, x: e.clientX, y: e.clientY })
+      // 노드의 시뮬레이션 좌표 → 화면 좌표로 변환 (pan/zoom 적용)
+      const canvas = canvasRef.current
+      const rect = canvas?.getBoundingClientRect()
+      const { x: tx, y: ty, scale } = viewRef.current
+      const screenX = rect ? rect.left + node.x * scale + tx : e.clientX
+      const screenY = rect ? rect.top  + node.y * scale + ty : e.clientY
+      setTooltip({ nodeId: node.id, x: screenX, y: screenY })
     } else {
       setTooltip(null)
     }

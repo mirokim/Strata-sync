@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+chromadb
+langchain-text-splitters
+httpx
+pytest
+pytest-asyncio

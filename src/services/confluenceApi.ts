@@ -8,7 +8,7 @@
  * On-premise Confluence may need CORS headers configured on the server.
  */
 
-import { getAttachmentType, type ConfluencePage, type ConfluenceAttachment } from '@/lib/confluenceConverter'
+import { getAttachmentType, type ConfluenceExportPage, type ConfluenceAttachment } from '@/lib/confluenceConverter'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,13 +25,13 @@ export interface ConfluenceCredentials {
   authHeader: string
 }
 
-export interface ConfluencePageSummary {
+export interface ConfluenceExportPageSummary {
   id: string
   title: string
   spaceKey: string
 }
 
-export interface ConfluencePageDetail {
+export interface ConfluenceExportPageDetail {
   id: string
   title: string
   /** Confluence HTML "view" format (rendered, stripped of Confluence-specific macros) */
@@ -89,8 +89,8 @@ async function cfetch<T>(url: string, creds: ConfluenceCredentials): Promise<T> 
 export async function fetchPages(
   creds: ConfluenceCredentials,
   spaceKey?: string,
-): Promise<ConfluencePageSummary[]> {
-  const all: ConfluencePageSummary[] = []
+): Promise<ConfluenceExportPageSummary[]> {
+  const all: ConfluenceExportPageSummary[] = []
   let start = 0
   const limit = 50
 
@@ -128,7 +128,7 @@ export async function fetchPages(
 export async function fetchPageDetail(
   creds: ConfluenceCredentials,
   pageId: string,
-): Promise<ConfluencePageDetail> {
+): Promise<ConfluenceExportPageDetail> {
   const params = new URLSearchParams({
     expand: 'body.view,history,history.lastUpdated',
   })
@@ -188,31 +188,106 @@ export async function downloadAttachmentAsFile(
   att: ConfluenceAttachmentInfo,
 ): Promise<File> {
   if (att.fileSize > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`File size exceeded (${(att.fileSize / 1024 / 1024).toFixed(1)} MB > 10 MB)`)
+    throw new Error(`파일 크기 초과 (${(att.fileSize / 1024 / 1024).toFixed(1)} MB > 10 MB)`)
   }
 
   const url = `${creds.baseUrl}${att.downloadPath}`
   const res = await fetch(url, { headers: { Authorization: creds.authHeader } })
-  if (!res.ok) throw new Error(`Download failed: ${att.title} (${res.status})`)
+  if (!res.ok) throw new Error(`다운로드 실패: ${att.title} (${res.status})`)
 
   const buffer = await res.arrayBuffer()
   return new File([buffer], att.title, { type: att.mediaType })
+}
+
+/**
+ * Fetch current page version number (needed for updates).
+ */
+export async function fetchPageVersion(
+  creds: ConfluenceCredentials,
+  pageId: string,
+): Promise<number> {
+  const data = await cfetch<Record<string, unknown>>(
+    `${creds.baseUrl}/rest/api/content/${pageId}?expand=version`,
+    creds,
+  )
+  const version = data['version'] as Record<string, unknown> | undefined
+  return Number(version?.['number'] ?? 1)
+}
+
+/**
+ * Update a Confluence page with new markdown content.
+ * Converts markdown to basic HTML storage format.
+ *
+ * Requires `confluence_page_id` in the document frontmatter.
+ */
+export async function updatePage(
+  creds: ConfluenceCredentials,
+  pageId: string,
+  title: string,
+  markdownBody: string,
+): Promise<void> {
+  const currentVersion = await fetchPageVersion(creds, pageId)
+
+  // Simple markdown → Confluence storage format conversion
+  // Full macro support is omitted — basic headings/bold/italic/code/lists
+  const storageHtml = markdownBody
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<[h|l|p])(.+)$/gm, '<p>$1</p>')
+
+  const body = {
+    version: { number: currentVersion + 1 },
+    title,
+    type: 'page',
+    body: {
+      storage: {
+        value: storageHtml,
+        representation: 'storage',
+      },
+    },
+  }
+
+  const res = await fetch(`${creds.baseUrl}/rest/api/content/${pageId}`, {
+    method: 'PUT',
+    headers: {
+      ...headers(creds) as Record<string, string>,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`
+    try { const data = await res.json(); msg = data.message ?? msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
 }
 
 // ── High-level builder ────────────────────────────────────────────────────────
 
 /**
  * Wrap Confluence API page detail into the same HTML structure as downloaded
- * pages so that `convertConfluencePage()` can be reused without modification.
+ * pages so that `convertConfluenceExportPage()` can be reused without modification.
  */
-function wrapAsDownloadedHtml(detail: ConfluencePageDetail): string {
+function htmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function wrapAsDownloadedHtml(detail: ConfluenceExportPageDetail): string {
+  const safeTitle = htmlEscape(detail.title)
   return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>${detail.title}</title></head>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>${safeTitle}</title></head>
 <body>
-  <h1>${detail.title}</h1>
+  <h1>${safeTitle}</h1>
   <div class="meta">
-    Created: ${detail.created} &nbsp;|&nbsp; Modified: ${detail.modified}
+    생성: ${detail.created} &nbsp;|&nbsp; 수정: ${detail.modified}
   </div>
   ${detail.bodyHtml}
 </body>
@@ -221,16 +296,16 @@ function wrapAsDownloadedHtml(detail: ConfluencePageDetail): string {
 
 /**
  * Fetch a page + its doc attachments from the Confluence API and return a
- * `ConfluencePage` object compatible with `convertConfluencePage()`.
+ * `ConfluenceExportPage` object compatible with `convertConfluenceExportPage()`.
  *
  * @param onProgress Optional callback for progress reporting
  */
-export async function buildConfluencePage(
+export async function buildConfluenceExportPage(
   creds: ConfluenceCredentials,
-  summary: ConfluencePageSummary,
+  summary: ConfluenceExportPageSummary,
   onProgress?: (msg: string) => void,
-): Promise<ConfluencePage> {
-  onProgress?.('Fetching page content…')
+): Promise<ConfluenceExportPage> {
+  onProgress?.('페이지 내용 가져오는 중…')
 
   const detail = await fetchPageDetail(creds, summary.id)
   const htmlString = wrapAsDownloadedHtml(detail)
@@ -242,7 +317,7 @@ export async function buildConfluencePage(
     { type: 'text/html' },
   )
 
-  onProgress?.('Fetching attachment list…')
+  onProgress?.('첨부파일 목록 가져오는 중…')
 
   const attInfos = await fetchAttachments(creds, summary.id)
   const docTypes = ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls'] as const
@@ -253,7 +328,7 @@ export async function buildConfluencePage(
 
   const attachments: ConfluenceAttachment[] = []
   for (const attInfo of docAttInfos) {
-    onProgress?.(`Downloading attachment: ${attInfo.title}`)
+    onProgress?.(`첨부파일 다운로드: ${attInfo.title}`)
     try {
       const file = await downloadAttachmentAsFile(creds, attInfo)
       attachments.push({ file, type: getAttachmentType(attInfo.title) })

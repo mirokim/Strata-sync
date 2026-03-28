@@ -4,11 +4,8 @@ import { useChatStore } from '@/stores/chatStore'
 import { useGraphStore } from '@/stores/graphStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { generateId } from '@/lib/utils'
+import { MAX_FILE_SIZE } from '@/lib/constants'
 import type { Attachment } from '@/types'
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 
 // ── File → Attachment converter ───────────────────────────────────────────────
 

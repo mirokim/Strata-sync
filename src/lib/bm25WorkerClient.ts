@@ -124,6 +124,7 @@ export function findLinksFromCache(
       speaker: d.speaker,
       termFreqs: [],         // Not used by findImplicitLinks
       docLen: 0,             // Not used by findImplicitLinks
+      contentDate: d.contentDate ?? 0,
       bm25Vec: d.bm25Vec,    // Needed for cosine similarity
       bm25Norm: d.bm25Norm,  // Needed for normalization
     })),

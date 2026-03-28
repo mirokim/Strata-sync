@@ -31,6 +31,14 @@ export const LABEL_MIN_GAP = 64
 /** Viewport padding pixels used for fit-to-view (Graph2D / Graph2DCanvas) */
 export const GRAPH_VIEW_PADDING = 48
 
+// ── Agent / LLM ──────────────────────────────────────────────────────────────
+
+/** Maximum output tokens for agent LLM calls */
+export const AGENT_MAX_OUTPUT_TOKENS = 8096
+
+/** Maximum characters per file sent to the edit agent LLM */
+export const EDIT_AGENT_MAX_FILE_CHARS = 12000
+
 // ── TF-IDF / Graph Analysis ───────────────────────────────────────────────────
 
 /** Maximum number of documents for O(N²) implicit link computation */
@@ -43,3 +51,8 @@ export const BFS_DEFAULT_HOPS = 3
 
 /** Default maximum document count for BFS graph traversal */
 export const BFS_DEFAULT_MAX_DOCS = 20
+
+// ── Backend ──────────────────────────────────────────────────────────────────
+
+/** Default port for the Python FastAPI backend */
+export const BACKEND_DEFAULT_PORT = 7331

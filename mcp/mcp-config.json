@@ -1,0 +1,61 @@
+{
+  "vaultPath": "",
+  "apiKeys": {},
+  "personaModels": {
+    "chief_director": "claude-sonnet-4-6",
+    "art_director": "claude-sonnet-4-6",
+    "plan_director": "claude-sonnet-4-6",
+    "level_director": "claude-sonnet-4-6",
+    "prog_director": "claude-sonnet-4-6"
+  },
+  "projectInfo": {
+    "name": "",
+    "engine": "",
+    "genre": "",
+    "platform": "",
+    "description": "",
+    "rawProjectInfo": "",
+    "currentSituation": ""
+  },
+  "editAgent": {
+    "modelId": "claude-sonnet-4-6",
+    "refinementManual": ""
+  },
+  "confluence": {
+    "baseUrl": "",
+    "authType": "cloud",
+    "email": "",
+    "apiToken": "",
+    "spaceKey": "",
+    "targetFolder": "active",
+    "dateFrom": "2026-01-01",
+    "bypassSSL": false
+  },
+  "jira": {
+    "baseUrl": "",
+    "email": "",
+    "apiToken": "",
+    "projectKey": "",
+    "jql": "",
+    "authType": "cloud",
+    "bypassSSL": false,
+    "targetFolder": "jira"
+  },
+  "slackBot": {
+    "botToken": "",
+    "appToken": "",
+    "signingSecret": "",
+    "model": "claude-sonnet-4-6"
+  },
+  "searchConfig": {
+    "filenameWeight": 10,
+    "bodyWeight": 1,
+    "bm25Candidates": 8,
+    "bfsMaxHops": 3,
+    "bfsMaxDocs": 20,
+    "fullVaultThreshold": 60000
+  },
+  "responseInstructions": "",
+  "ragInstruction": "",
+  "sensitiveKeywords": ""
+}
