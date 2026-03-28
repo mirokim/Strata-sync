@@ -58,7 +58,7 @@ Graph RAG(Retrieval-Augmented Generation)는 문서 간 연결 구조(그래프)
   **항목**          **내용**
   지식 베이스       Obsidian Vault (Markdown 파일)
   원본 소스         사내 위키, Confluence, Notion, 외부 참고 사이트 등
-  그래프 RAG 엔진   Rembrandt Map 또는 동등 Graph RAG 시스템
+  그래프 RAG 엔진   Strata Sync 또는 동등 Graph RAG 시스템
   링크 형식         Wikilink \[\[문서명\]\] / !\[\[이미지명\]\]
   ----------------- ----------------------------------------------------
 

@@ -342,7 +342,7 @@ DOCX:
 
 **4.0.2 날짜 파일명 패턴 권장**
 
-Rembrandt Map의 directVaultSearch는 `[YYYY.MM.DD]` 형식의 파일명을 감지하여
+Strata Sync의 directVaultSearch는 `[YYYY.MM.DD]` 형식의 파일명을 감지하여
 자연어 질문에서도 해당 파일을 직접 검색한다. TF-IDF를 통하지 않고 파일명
 매칭으로 우선 처리되므로 날짜 기반 문서(피드백·회의록·보고서)는 아래 형식을
 따를 때 검색 정확도가 크게 향상된다.

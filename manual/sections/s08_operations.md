@@ -97,7 +97,7 @@ Graph RAG가 새 문서에 접근하는 경로가 생긴다.
 
 **17.1.5 TF-IDF / BM25 인덱스 자동 재인덱싱**
 
-inject\_keywords.py 실행이나 파일 추가·수정 후 Rembrandt Map에서 별도로
+inject\_keywords.py 실행이나 파일 추가·수정 후 Strata Sync에서 별도로
 인덱스를 갱신할 필요가 없다. 볼트를 재오픈하면 파일 mtime 기반
 fingerprint를 자동 비교하여 변경이 있을 때만 재인덱싱한다.
 

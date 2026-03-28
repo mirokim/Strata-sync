@@ -450,7 +450,7 @@ export default function AITab() {
             lineHeight: 1.6,
             outline: 'none',
           }}
-          placeholder={'예: 캐릭터C, 렘브란트\n캐릭터 외형\n스킬 시스템'}
+          placeholder={'예: 캐릭터C, 프로젝트A\n캐릭터 외형\n스킬 시스템'}
         />
       </section>
     </div>

@@ -1670,7 +1670,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         f"`{p['name']}` ({len(p.get('personas', []))}명)" for p in saved_presets[:6]
                     )
                 else:
-                    preset_lines = "  _(아직 저장된 프리셋이 없어요. 렘브란트 맵 Settings > MiroFish 에서 만들 수 있어요)_"
+                    preset_lines = "  _(아직 저장된 프리셋이 없어요. Strata Sync Settings > MiroFish 에서 만들 수 있어요)_"
                 say(
                     blocks=[
                         {
@@ -1795,7 +1795,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 self._log(f"[Slack] 히스토리 {len(history)//2}턴 복원")
 
             claude = None  # 폴백에서 덮어씀, 사용자 기억 갱신에 사용
-            # 1순위: Electron /ask — 렘브란트 맵의 BFS RAG + LLM 파이프라인 그대로 사용
+            # 1순위: Electron /ask — Strata Sync의 BFS RAG + LLM 파이프라인 그대로 사용
             if progress: progress.start("electron")
 
             # Electron HTTP 준비 확인 (3초 이내 /settings 응답)
@@ -2605,7 +2605,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
-        self._log("🟢 Slack 봇 시작 — 모델: 렘브란트 맵 페르소나 설정 따름")
+        self._log("🟢 Slack 봇 시작 — 모델: Strata Sync 페르소나 설정 따름")
         return True
 
     def stop(self):

@@ -26,7 +26,7 @@
 
 ### 1-2. `keyword_index_path` 경로 중복 (높음)
 
-`.rembrandt/keyword_index.json` 이 5곳에 분산됨.
+`.strata-sync/keyword_index.json` 이 5곳에 분산됨.
 
 | 파일 | 줄 | 형태 |
 |------|----|------|
