@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-check_quality.py — §13.1 Vault 품질 감사 도구 (12개 항목)
+check_quality.py — §13.1 Vault quality audit tool (12 items)
 
-검사 항목:
-  ① 고립 노드      — wikilink([[...]]) 가 하나도 없는 파일
-  ② Frontmatter    — --- ... --- 블록이 없는 파일
-  ③ 빈 tags        — tags: [] 인 파일
-  ④ ## 헤딩 없음   — 본문에 ## 이 없는 파일
-  ⑤ 300자 미만     — 본문 실질 글자 수 300자 미만 (정보 밀도 부족)
-  ⑥ 중첩 wikilink  — inject_keywords v1 버그 산물 ([[[stem]] 패턴 포함)
-  ⑦ 4중+ 대괄호    — [[[[stem]]]] 패턴
-  ⑧ 깨진 문서 링크 — [[stem]] 이 존재하지 않는 파일을 가리키는 링크
-  ⑨ 동일 링크 5회+ — 같은 stem 5회 이상 반복
-  ⑩ 문서 크기 분포 — <2KB / 2–10KB / 10–50KB / >50KB
-  ⑪ speaker 누락   — frontmatter에 speaker 필드가 없는 파일
-  ⑫ chief 미연결   — tags에 chief가 있으나 related 필드가 없는 파일
+Inspection items:
+  ① Isolated nodes      — files with no wikilinks ([[...]])
+  ② Frontmatter    — files without --- ... --- block
+  ③ Empty tags        — files with tags: []
+  ④ No ## heading   — files without ## in body
+  ⑤ Under 300 chars   — actual body character count under 300 (low information density)
+  ⑥ Nested wikilink  — inject_keywords v1 bug artifact (contains [[[stem]] pattern)
+  ⑦ 4+ brackets    — [[[[stem]]]] pattern
+  ⑧ Broken doc links — links pointing to non-existent [[stem]] files
+  ⑨ Same link 5+    — same stem repeated 5+ times
+  ⑩ File size dist  — <2KB / 2–10KB / 10–50KB / >50KB
+  ⑪ Missing speaker — files without speaker field in frontmatter
+  ⑫ Chief unlinked  — files with chief tag but no related field
 
-사용법:
+Usage:
   python check_quality.py <active_dir> [--attachments <dir>] [--verbose]
 """
 
@@ -32,7 +32,7 @@ MEDIA_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp',
               '.pdf', '.psd', '.ai'}
 
 
-# ── 실질 본문 글자 수 계산 (§3.1.1) ─────────────────────────────
+# ── Calculate actual body character count (§3.1.1) ─────────────────────────────
 def body_char_count(content: str) -> int:
     text = content
     if text.startswith('---'):
@@ -48,8 +48,8 @@ def body_char_count(content: str) -> int:
 
 
 def has_image_content(content: str) -> bool:
-    """§3.1.1 주의: 이미지 링크(![[...]]) 또는 테이블이 있으면 실질 콘텐츠로 인정.
-    이미지 전용 파일은 본문 글자 수와 관계없이 스텁/소형 파일로 분류하지 않는다."""
+    """§3.1.1 Note: Image links (![[...]]) or tables count as actual content.
+    Image-only files are not classified as stubs/small files regardless of body character count."""
     has_img   = bool(re.search(r'!\[\[[^\]]+\]\]', content))
     has_table = bool(re.search(r'^\|.+\|', content, re.MULTILINE))
     return has_img or has_table
@@ -173,7 +173,7 @@ def run_audit(active_dir: Path, attachments_dir: Path | None = None,
     print("=" * 55)
     print("§13.1 Vault 품질 감사 리포트 (12개 항목)")
     print("=" * 55)
-    print(f"총 파일: {total}개\n")
+    print(f"Total files: {total}개\n")
 
     def ok(n): return '✅' if n == 0 else '⚠️'
 
@@ -220,11 +220,11 @@ def run_audit(active_dir: Path, attachments_dir: Path | None = None,
     if verbose and no_related_chief:
         for s in no_related_chief[:10]: print(f"     {s}")
 
-    print(f"\n── 연결도 ─────────────────────────")
-    print(f"  평균 wikilink: {avg_links:.1f}개/파일")
-    print(f"  링크 없는 파일: {sum(1 for c in link_counts if c == 0)}개")
+    print(f"\n── Connectivity ─────────────────────────")
+    print(f"  Average wikilinks: {avg_links:.1f}개/파일")
+    print(f"  Files with no links: {sum(1 for c in link_counts if c == 0)}개")
 
-    print(f"\n── ⑩ 파일 크기 분포 ─────────────────")
+    print(f"\n── ⑩ File size distribution ─────────────────")
     for label in ['<2KB', '2–10KB', '10–50KB', '>50KB']:
         n = size_dist.get(label, 0)
         bar = '█' * (n // 30)
@@ -239,7 +239,7 @@ def run_audit(active_dir: Path, attachments_dir: Path | None = None,
     for t, n in sorted(type_count.items(), key=lambda x: -x[1]):
         print(f"  {t:12s}: {n:4d}개")
 
-    print(f"\n── 목표 달성 여부 ─────────────────")
+    print(f"\n── Goal achievement ─────────────────")
     goal_isolated = len(isolated) / total < 0.02
     goal_heading  = (total - len(no_heading)) / total >= 0.99
     goal_tags     = (total - len(empty_tags))  / total >= 0.9
@@ -249,18 +249,18 @@ def run_audit(active_dir: Path, attachments_dir: Path | None = None,
     print(f"  고립 노드: {len(isolated)/total*100:.1f}% (목표: <2%)  {'✅' if goal_isolated else '❌'}")
     print(f"  ## 헤딩:   {(total-len(no_heading))/total*100:.1f}% (목표: 99%+) {'✅' if goal_heading else '❌'}")
     print(f"  tags:      {(total-len(empty_tags))/total*100:.1f}% (목표: 90%+) {'✅' if goal_tags else '❌'}")
-    print(f"  깨진 링크: {len(broken_doc)}개  (목표: 0개)   {'✅' if len(broken_doc)==0 else '❌'}")
-    print(f"  중첩링크:  {len(nested_links)}개  (목표: 0개)   {'✅' if not nested_links else '❌'}")
+    print(f"  깨진 Links: {len(broken_doc)}개  (목표: 0개)   {'✅' if len(broken_doc)==0 else '❌'}")
+    print(f"  중첩Links:  {len(nested_links)}개  (목표: 0개)   {'✅' if not nested_links else '❌'}")
 
     if all_pass:
-        print("\n🎉 모든 품질 목표 달성!")
+        print("\n🎉 All quality goals achieved!")
 
 
 def main():
     parser = argparse.ArgumentParser(description='§13.1 Vault 품질 감사 (12개 항목)')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
-    parser.add_argument('--attachments', default=None, help='attachments/ 폴더 경로')
-    parser.add_argument('--verbose', '-v', action='store_true', help='문제 파일 목록 출력')
+    parser.add_argument('active_dir', help='active/ folder path')
+    parser.add_argument('--attachments', default=None, help='attachments/ folder path')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Output list of problematic files')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
@@ -268,7 +268,7 @@ def main():
                       active_dir.parent / 'attachments'
 
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 없음"); sys.exit(1)
+        print(f"Error: {active_dir} not found"); sys.exit(1)
 
     run_audit(active_dir, attachments_dir, verbose=args.verbose)
 

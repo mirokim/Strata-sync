@@ -1,6 +1,6 @@
 /**
- * 추가 40개 시나리오 — 200개 달성용.
- * 기존 160개와 중복 없이 새 키워드/조합 커버.
+ * Additional 40 scenarios — reaching 200 total.
+ * Covers new keywords/combinations without overlapping the existing 160.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import * as fs from 'fs'
@@ -32,7 +32,7 @@ function loadDir(dir: string, prefix: string): LoadedDocument[] {
 
 beforeAll(() => {
   allDocs = [...loadDir(VAULT, ''), ...loadDir(path.join(VAULT, 'active'), 'active'), ...loadDir(path.join(VAULT, '.archive'), '.archive')]
-  console.log(`\n📂 볼트: ${allDocs.length}개`)
+  console.log(`\n📂 Vault: ${allDocs.length} docs`)
   useVaultStore.setState({ loadedDocuments: allDocs })
   useGraphStore.setState({ links: [] })
   tfidf = new TfIdfIndex()
@@ -74,9 +74,9 @@ function chk(label: string, ok: boolean) { console.log(`  ${ok ? '✅' : '❌'} 
 
 // ── 40 Scenarios (101-140) ───────────────────────────────────────────────
 
-describe('40개 추가 시나리오 (101-140)', () => {
+describe('40 additional scenarios (101-140)', () => {
 
-  // ━━━ 전투/스킬 심화 (101-108) ━━━
+  // ━━━ Combat/Skill deep-dive (101-108) ━━━
 
   it('101: 버프 디버프 시스템 추가', () => { const r = S('버프 디버프 시스템 추가'); P('버프 디버프 시스템', r); chk('Top-3 버프/디버프', has(r, 3, '버프', '디버프')) })
   it('102: 스킬 슬롯 전환 기능', () => { const r = S('스킬 슬롯 전환'); P('스킬 슬롯 전환', r); chk('Top-3 슬롯 전환', has(r, 3, '슬롯 전환', '슬롯')) })
@@ -87,7 +87,7 @@ describe('40개 추가 시나리오 (101-140)', () => {
   it('107: 인게임 시스템 메시지', () => { const r = S('인게임 시스템 메시지'); P('인게임 시스템 메시지', r); chk('Top-3 시스템 메시지', has(r, 3, '시스템 메시지', '인게임')) })
   it('108: 핑 시스템 개선 기획', () => { const r = S('핑 시스템 개선'); P('핑 시스템', r); chk('Top-3 핑 시스템', has(r, 3, '핑 시스템', '핑')) })
 
-  // ━━━ 캐릭터 심화 (109-116) ━━━
+  // ━━━ Character deep-dive (109-116) ━━━
 
   it('109: 사무라이 캐릭터 개요', () => { const r = S('사무라이 캐릭터 개요'); P('사무라이', r); chk('Top-5 사무라이', has(r, 5, '사무라이')) })
   it('110: 캐릭터D 거대화 스킬', () => { const r = S('캐릭터D 거대화'); P('캐릭터D 거대화', r); chk('Top-3 캐릭터D/거대화', has(r, 3, '캐릭터D', '거대화')) })
@@ -98,7 +98,7 @@ describe('40개 추가 시나리오 (101-140)', () => {
   it('115: 캐릭터C 역령부 스킬', () => { const r = S('캐릭터C 역령부'); P('캐릭터C 역령부', r); chk('Top-3 캐릭터C/역령부', has(r, 3, '캐릭터C', '역령부')) })
   it('116: 캐릭터B 재블린 미사일', () => { const r = S('캐릭터B 재블린 미사일'); P('캐릭터B 재블린', r); chk('Top-3 캐릭터B/재블린', has(r, 3, '캐릭터B', '재블린')) })
 
-  // ━━━ 맵/레벨 심화 (117-122) ━━━
+  // ━━━ Map/Level deep-dive (117-122) ━━━
 
   it('117: 점령전 폴리싱 블록 리스트', () => { const r = S('점령전 폴리싱 블록 리스트'); P('점령전 폴리싱', r); chk('Top-3 폴리싱 블록', has(r, 3, '폴리싱', '블록 리스트')) })
   it('118: 점령전 킬캠 기획', () => { const r = S('점령전 킬캠'); P('점령전 킬캠', r); chk('Top-3 킬캠', has(r, 3, '킬캠')) })
@@ -107,7 +107,7 @@ describe('40개 추가 시나리오 (101-140)', () => {
   it('121: 신전 구역 보고 히스토리', () => { const r = S('신전 구역 보고'); P('신전 구역', r); chk('Top-5 신전', has(r, 5, '신전')) })
   it('122: 텔모칸 타워 레벨 디자인', () => { const r = S('텔모칸 타워'); P('텔모칸 타워', r); chk('Top-3 텔모칸/타워', has(r, 3, '텔모칸', '타워')) })
 
-  // ━━━ 아트/테크 심화 (123-128) ━━━
+  // ━━━ Art/Tech deep-dive (123-128) ━━━
 
   it('123: 버텍스 아웃라인 셰이더', () => { const r = S('버텍스 아웃라인'); P('버텍스 아웃라인', r); chk('Top-3 버텍스/아웃라인', has(r, 3, '버텍스', '아웃라인')) })
   it('124: 아군 적군 아웃라인 표시 규칙', () => { const r = S('아군 적군 아웃라인 표시 규칙'); P('아웃라인 규칙', r); chk('Top-3 아웃라인 규칙', has(r, 3, '아웃라인', '규칙')) })
@@ -116,7 +116,7 @@ describe('40개 추가 시나리오 (101-140)', () => {
   it('127: 의상 파괴 시스템', () => { const r = S('의상 파괴'); P('의상 파괴', r); chk('Top-3 의상파괴/의상', has(r, 3, '의상파괴', '의상')) })
   it('128: 카메라 셀렉터 기능', () => { const r = S('카메라 셀렉터'); P('카메라 셀렉터', r); chk('Top-3 카메라/셀렉터', has(r, 3, '카메라', '셀렉터')) })
 
-  // ━━━ 기획/시스템 심화 (129-134) ━━━
+  // ━━━ Planning/System deep-dive (129-134) ━━━
 
   it('129: 엔진 교체 고려 사항', () => { const r = S('엔진 교체 고려 사항'); P('엔진 교체', r); chk('Top-3 엔진 교체', has(r, 3, '엔진 교체', '엔진')) })
   it('130: 기획 테스트 서버 가이드', () => { const r = S('기획 테스트 서버 가이드'); P('테스트 서버 가이드', r); chk('Top-3 테스트 서버/가이드', has(r, 3, '테스트 서버', '서버 가이드', '기획 테스트')) })
@@ -125,14 +125,14 @@ describe('40개 추가 시나리오 (101-140)', () => {
   it('133: WorldObject 등록 데이터테이블 관리', () => { const r = S('WorldObject 등록 데이터테이블'); P('WorldObject 등록', r); chk('Top-3 WorldObject', has(r, 3, 'worldobject', '데이터테이블')) })
   it('134: 오브젝트 블록 그룹 시스템', () => { const r = S('오브젝트 블록 그룹 시스템'); P('블록 그룹', r); chk('Top-3 블록 그룹', has(r, 3, '블록 그룹', '오브젝트 블록')) })
 
-  // ━━━ 세계관/시나리오 (135-138) ━━━
+  // ━━━ World-building/Scenario (135-138) ━━━
 
   it('135: 루모와 마법 설정', () => { const r = S('루모와 마법 설정'); P('루모 마법', r); chk('Top-3 루모/마법', has(r, 3, '루모', '마법')) })
   it('136: 마법공학 컨셉', () => { const r = S('마법공학 컨셉'); P('마법공학', r); chk('Top-3 마법공학', has(r, 3, '마법공학')) })
   it('137: 직업 크래프팅 기준표', () => { const r = S('직업 크래프팅 기준표'); P('직업 크래프팅', r); chk('Top-5 직업/크래프팅', has(r, 5, '직업', '크래프팅')) })
   it('138: 텔모칸 문자 체계', () => { const r = S('텔모칸 문자'); P('텔모칸 문자', r); chk('Top-3 텔모칸 문자', has(r, 3, '텔모칸 문자', '텔모칸')) })
 
-  // ━━━ 엣지/복합 (139-140) ━━━
+  // ━━━ Edge/Composite (139-140) ━━━
 
   it('139: Wwise Appendix 사운드', () => { const r = S('Wwise Appendix'); P('Wwise Appendix', r); chk('Top-3 Wwise', has(r, 3, 'wwise')) })
   it('140: 스페이스 엔지니어 레퍼런스', () => { const r = S('스페이스 엔지니어 레퍼런스'); P('스페이스 엔지니어', r); chk('Top-3 스페이스 엔지니어', has(r, 3, '스페이스 엔지니어', 'space')) })

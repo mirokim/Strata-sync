@@ -1,6 +1,6 @@
 """
-wikilink_updater.py — keyword_index.json 기반 wikilink 주입 + 클러스터 링크 강화
-inject_keywords.py + enhance_wikilinks.py 로직을 통합
+wikilink_updater.py — keyword_index.json based wikilink injection + cluster link enhancement
+Integrates inject_keywords.py + enhance_wikilinks.py logic
 """
 import re
 from pathlib import Path
@@ -32,7 +32,7 @@ def _get_fm_end(text: str) -> int:
 
 
 def inject_keywords(text: str, keyword_map: dict) -> tuple[str, list[str]]:
-    """keyword_map: {keyword: (hub_stem, display)} → 첫 등장 wikilink 주입"""
+    """keyword_map: {keyword: (hub_stem, display)} → inject wikilink at first occurrence"""
     fm_end = _get_fm_end(text)
     fm = text[:fm_end]
     body = text[fm_end:]
@@ -43,7 +43,7 @@ def inject_keywords(text: str, keyword_map: dict) -> tuple[str, list[str]]:
         pat = re.compile(re.escape(keyword))
         for m in pat.finditer(masked):
             link = f"[[{hub_stem}|{display}]]"
-            # 주입 후 새 링크도 즉시 마스킹하여 이후 키워드가 오염시키지 못하게 방지
+            # Immediately mask new links after injection to prevent later keywords from corrupting them
             placeholder = f"\x00WL{len(saved)}\x00"
             saved.append(link)
             masked = masked[:m.start()] + placeholder + masked[m.end():]
@@ -54,13 +54,13 @@ def inject_keywords(text: str, keyword_map: dict) -> tuple[str, list[str]]:
 
 
 def inject_cluster_links(content: str, related_stems: list[str]) -> str:
-    """파일 하단 '## 관련 문서' 섹션 추가 (이미 있으면 갱신)"""
-    marker = "## 관련 문서"
+    """Add '## Related Documents' section at the bottom of the file (update if already exists)"""
+    marker = "## 관련 문서"  # Keep Korean marker for vault compatibility
     link_block = "\n".join(f"- [[{s}]]" for s in related_stems[:10])
     new_section = f"{marker}\n{link_block}\n"
 
     if marker in content:
-        # 기존 섹션 교체
+        # Replace existing section
         return re.sub(
             rf"{re.escape(marker)}.*?(?=\n##|\Z)",
             new_section,
@@ -76,18 +76,18 @@ def process_folder(
     log_fn=print,
 ) -> dict:
     """
-    active 폴더 처리:
-    1. keyword_map 기반 wikilink 주입
-    2. 태그 기반 클러스터 링크 추가
+    Process an active folder:
+    1. Inject wikilinks based on keyword_map
+    2. Add cluster links based on tags
     returns: {"updated": int, "keyword_hits": {keyword: count}}
     """
     import yaml
 
     folder = Path(folder_path)
     md_files = [f for f in folder.iterdir() if f.suffix == ".md" and not f.stem.startswith("index_")]
-    log_fn(f"  대상 파일: {len(md_files)}개 in {folder.name}")
+    log_fn(f"  Target files: {len(md_files)} in {folder.name}")
 
-    # 메타 수집 (태그 기반 클러스터링용)
+    # Collect metadata (for tag-based clustering)
     meta: dict = {}
     for f in md_files:
         try:
@@ -104,7 +104,7 @@ def process_folder(
                     pass
         meta[f.stem] = {"tags": fm.get("tags") or [], "raw": raw, "path": f}
 
-    # 태그 → stem 매핑
+    # Tag → stem mapping
     tag_groups: dict[str, list[str]] = {}
     for stem, info in meta.items():
         for tag in info["tags"]:
@@ -117,13 +117,13 @@ def process_folder(
         original = info["raw"]
         text = original
 
-        # 1. Keyword wikilink 주입
+        # 1. Keyword wikilink injection
         if keyword_map:
             text, injected = inject_keywords(text, keyword_map)
             for kw in injected:
                 keyword_hits[kw] = keyword_hits.get(kw, 0) + 1
 
-        # 2. 클러스터 링크
+        # 2. Cluster links
         related = []
         for tag in info["tags"]:
             for other in tag_groups.get(tag, []):
@@ -136,5 +136,5 @@ def process_folder(
             info["path"].write_text(text, encoding="utf-8")
             updated += 1
 
-    log_fn(f"  업데이트: {updated}개 파일")
+    log_fn(f"  Updated: {updated} files")
     return {"updated": updated, "keyword_hits": keyword_hits}

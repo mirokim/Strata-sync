@@ -1,10 +1,10 @@
 """
-tests/test_bot_handlers.py — SlackBotRunner 이벤트 핸들러 로직 유닛 테스트
+tests/test_bot_handlers.py — SlackBotRunner event handler logic unit tests
 
-handle_dm / handle_mention 의 필터 로직과 히스토리 키 형식을 검증.
-bot.py 전체를 임포트하지 않고, 해당 로직만 인라인으로 추출해서 테스트.
+Verifies filter logic and history key format for handle_dm / handle_mention.
+Tests extracted inline logic without importing all of bot.py.
 
-실행: python -m pytest bot/tests/ -v
+Run: python -m pytest bot/tests/ -v
 """
 import sys
 import unittest
@@ -21,7 +21,7 @@ from modules.slack_utils import extract_slack_files
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _dm_should_process(event: dict) -> bool:
-    """handle_dm의 필터 조건 — bot.py와 동기화 유지 필요."""
+    """handle_dm filter conditions — needs to stay in sync with bot.py."""
     if event.get("channel_type") != "im":
         return False
     subtype = event.get("subtype")
@@ -64,11 +64,11 @@ class TestHandleDmFilter(unittest.TestCase):
         }))
 
     def test_none_subtype_passes(self):
-        """subtype=None은 일반 메시지."""
+        """subtype=None is a normal message."""
         self.assertTrue(_dm_should_process({"channel_type": "im", "subtype": None}))
 
     def test_bot_id_with_file_share_still_filtered(self):
-        """봇 자신이 올린 파일은 처리하지 않음."""
+        """Files uploaded by the bot itself should not be processed."""
         self.assertFalse(_dm_should_process({
             "channel_type": "im",
             "bot_id": "B123",
@@ -77,7 +77,7 @@ class TestHandleDmFilter(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 히스토리 키 형식
+# History Key Format
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestConvHistoryKey(unittest.TestCase):
@@ -109,7 +109,7 @@ class TestConvHistoryKey(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# _conv_history 관리 (메모리 누수 방지 로직)
+# _conv_history management (memory leak prevention logic)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestConvHistoryManagement(unittest.TestCase):
@@ -123,7 +123,7 @@ class TestConvHistoryManagement(unittest.TestCase):
         answer: str,
         max_keys: int = 1000,
     ) -> None:
-        """bot.py의 히스토리 업데이트 로직 추출."""
+        """Extracted history update logic from bot.py."""
         conv_history[hist_key] = (history + [
             {"role": "user",      "content": query},
             {"role": "assistant", "content": answer},
@@ -160,7 +160,7 @@ class TestConvHistoryManagement(unittest.TestCase):
         max_k = 3
         for i in range(5):
             self._apply_history_update(h, f"key:{i}", [], "q", "a", max_keys=max_k)
-        # 최신 키들이 보존되어야 함
+        # Most recent keys should be preserved
         self.assertIn("key:4", h)
         self.assertIn("key:3", h)
         self.assertIn("key:2", h)
@@ -179,7 +179,7 @@ class TestConvHistoryManagement(unittest.TestCase):
 class TestImageFilesFilter(unittest.TestCase):
 
     def _get_image_files(self, files: list) -> list:
-        """respond()의 image_files 필터 추출."""
+        """Extracted image_files filter from respond()."""
         return [f for f in (files or []) if f.get("mimetype", "").startswith("image/")]
 
     def test_png_included(self):
@@ -216,14 +216,14 @@ class TestImageFilesFilter(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 이미지 요청 감지 로직
+# Image Request Detection Logic
 # ─────────────────────────────────────────────────────────────────────────────
 
 _IMAGE_KEYWORDS = ["이미지 보여줘", "이미지 있어", "사진 보여줘", "이미지 주세요", "이미지 검색", "사진 검색"]
 
 
 def _is_image_request(query: str) -> tuple[bool, str]:
-    """bot.py의 이미지 요청 감지 + 검색어 추출 로직 (bot.py와 동기화 필요)."""
+    """Image request detection + search term extraction logic from bot.py (needs sync with bot.py)."""
     is_req = any(kw in query for kw in _IMAGE_KEYWORDS)
     if not is_req:
         return False, query
@@ -259,10 +259,10 @@ class TestImageRequestDetection(unittest.TestCase):
         self.assertFalse(is_req)
 
     def test_term_falls_back_to_full_query_when_only_keyword(self):
-        """키워드만 있고 나머지 텍스트가 없으면 원래 쿼리 반환."""
+        """Returns original query when only keyword is present with no other text."""
         is_req, term = _is_image_request("이미지 보여줘")
         self.assertTrue(is_req)
-        self.assertEqual(term, "이미지 보여줘")  # 원본 반환
+        self.assertEqual(term, "이미지 보여줘")  # Original returned
 
     def test_multiple_keywords_stripped(self):
         is_req, term = _is_image_request("이미지 보여줘 캐릭터B 이미지 있어")
@@ -275,10 +275,10 @@ class TestImageRequestDetection(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestUploadImagesToSlack(unittest.TestCase):
-    """_upload_images_to_slack의 핵심 로직을 직접 테스트."""
+    """Directly test core logic of _upload_images_to_slack."""
 
     def _make_web_client(self, upload_url="https://files.slack.com/upload/v1/abc"):
-        """업로드 성공하는 mock WebClient."""
+        """Mock WebClient that succeeds on upload."""
         web = MagicMock()
         web.files_getUploadURLExternal.return_value = {
             "upload_url": upload_url,
@@ -288,7 +288,7 @@ class TestUploadImagesToSlack(unittest.TestCase):
         return web
 
     def _upload(self, web, image_paths, channel="C123", thread_ts=None):
-        """_upload_images_to_slack 로직 인라인 (bot.py와 동기화 필요)."""
+        """Inline _upload_images_to_slack logic (needs sync with bot.py)."""
         import os
         uploaded = 0
         for path in image_paths[:3]:
@@ -299,7 +299,7 @@ class TestUploadImagesToSlack(unittest.TestCase):
                 resp = web.files_getUploadURLExternal(filename=filename, length=len(content))
                 upload_url = resp["upload_url"]
                 file_id = resp["file_id"]
-                # requests.post는 mock으로 대체 (실제 HTTP 요청 없음)
+                # requests.post replaced by mock (no actual HTTP requests)
                 kw: dict = {"files": [{"id": file_id, "title": filename}], "channel_id": channel}
                 if thread_ts:
                     kw["thread_ts"] = thread_ts

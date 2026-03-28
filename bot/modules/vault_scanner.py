@@ -1,5 +1,5 @@
 """
-vault_scanner.py — 볼트 파일 스캔 및 파싱
+vault_scanner.py — Vault file scanning and parsing
 """
 import os
 import re
@@ -10,21 +10,21 @@ from pathlib import Path
 
 @dataclass
 class VaultDoc:
-    path: str           # 절대 경로
-    fname: str          # 파일명
-    stem: str           # 확장자 제외 이름
-    folder: str         # 상위 폴더명
+    path: str           # Absolute path
+    fname: str          # Filename
+    stem: str           # Name without extension
+    folder: str         # Parent folder name
     title: str = ""
     tags: list = field(default_factory=list)
     doc_type: str = "reference"
     date_str: str = ""
-    body: str = ""      # frontmatter 제외 본문
-    raw: str = ""       # 전체 원본 텍스트
+    body: str = ""      # Body excluding frontmatter
+    raw: str = ""       # Full original text
     body_len: int = 0
 
 
 def load_frontmatter(text: str) -> tuple[dict, str]:
-    """frontmatter 파싱 → (dict, body)"""
+    """Parse frontmatter → (dict, body)"""
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end != -1:
@@ -37,14 +37,14 @@ def load_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def scan_vault(vault_path: str) -> list[VaultDoc]:
-    """볼트 전체 .md 파일 스캔"""
+    """Scan all .md files in the vault"""
     docs: list[VaultDoc] = []
     vault = Path(vault_path)
     if not vault.exists():
         return docs
 
     for md_file in vault.rglob("*.md"):
-        # .strata-sync, .obsidian 등 숨김 폴더 제외
+        # Exclude hidden folders like .strata-sync, .obsidian
         parts = md_file.parts
         if any(p.startswith(".") for p in parts):
             continue
@@ -77,7 +77,7 @@ def scan_vault(vault_path: str) -> list[VaultDoc]:
 
 
 def find_active_folders(vault_path: str) -> list[str]:
-    """active_YYYYMMDD 폴더 목록 (날짜 역순)"""
+    """List of active_YYYYMMDD folders (reverse date order)"""
     vault = Path(vault_path)
     pattern = re.compile(r"^active_\d{8}$")
     folders = [
@@ -89,5 +89,5 @@ def find_active_folders(vault_path: str) -> list[str]:
 
 
 def get_wikilinks(text: str) -> list[str]:
-    """본문에서 [[stem]] 또는 [[stem|display]] 추출 → stem 리스트"""
+    """Extract [[stem]] or [[stem|display]] from body text → list of stems"""
     return re.findall(r"\[\[(.*?)(?:\|.*?)?\]\]", text, re.DOTALL)

@@ -1,8 +1,8 @@
 """
-oasis_env.py — OASIS 환경 (포스트 저장소 + 추천 엔진)
+oasis_env.py — OASIS Environment (Post Store + Recommendation Engine)
 
-OASIS environment.py + recommendation_system.py를 Python으로 재현합니다.
-포스트 관리, 좋아요/리포스트 추적, 팔로잉 기반 추천을 담당합니다.
+Reimplements OASIS environment.py + recommendation_system.py in Python.
+Handles post management, like/repost tracking, and following-based recommendations.
 """
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ class OASISPost:
     content: str
     round: int
     timestamp: float = field(default_factory=time.time)
-    likes: set[str] = field(default_factory=set)     # 좋아요 누른 에이전트 ID
-    reposts: set[str] = field(default_factory=set)   # 리포스트한 에이전트 ID
-    original_post_id: str | None = None              # 리포스트인 경우 원본 ID
+    likes: set[str] = field(default_factory=set)     # Agent IDs that liked
+    reposts: set[str] = field(default_factory=set)   # Agent IDs that reposted
+    original_post_id: str | None = None              # Original post ID if repost
 
 
-# 행동 타입별 기본 가중치 (OASIS action_space 대응)
+# Default weights per action type (corresponds to OASIS action_space)
 _ACTION_WEIGHTS = {
     "post":       0.55,
     "repost":     0.20,
@@ -39,10 +39,10 @@ _ACTION_WEIGHTS = {
 
 class OASISEnvironment:
     """
-    OASIS 시뮬레이션 환경.
-    - 포스트 저장 및 참여(좋아요/리포스트) 추적
-    - 팔로잉 기반 + 트렌딩 혼합 추천 (OASIS recommendation_system 대응)
-    - 에이전트 행동 결정 (확률 기반, OASIS action_space 대응)
+    OASIS simulation environment.
+    - Post storage and engagement (like/repost) tracking
+    - Following-based + trending mixed recommendations (corresponds to OASIS recommendation_system)
+    - Agent action decisions (probability-based, corresponds to OASIS action_space)
     """
 
     def __init__(self, graph: SocialGraph) -> None:
@@ -50,7 +50,7 @@ class OASISEnvironment:
         self._graph = graph
         self._counter = 0
 
-    # ── 포스트 관리 ───────────────────────────────────────────────────────────
+    # ── Post Management ────────────────────────────────────────────────────────
 
     def add_post(
         self,
@@ -80,14 +80,14 @@ class OASISEnvironment:
                 post.likes.add(agent_id)
                 return
 
-    # ── 추천 엔진 ─────────────────────────────────────────────────────────────
+    # ── Recommendation Engine ───────────────────────────────────────────────────
 
     def get_recommended_posts(self, agent_id: str, limit: int = 15) -> list[OASISPost]:
         """
-        OASIS recommendation_system.py 대응.
-        1. 팔로잉 에이전트 포스트 (최근 20개)
-        2. 전체 트렌딩 (좋아요+리포스트 합산 상위 10개)
-        중복 제거 후 limit 반환.
+        Corresponds to OASIS recommendation_system.py.
+        1. Posts from followed agents (most recent 20)
+        2. Global trending (top 10 by likes + reposts combined)
+        Deduplicated and limited to 'limit' results.
         """
         following = set(self._graph.get_following(agent_id))
         from_following = [
@@ -110,12 +110,12 @@ class OASISEnvironment:
 
         return merged[:limit]
 
-    # ── 행동 결정 (OASIS action_space 대응) ──────────────────────────────────
+    # ── Action Decision (corresponds to OASIS action_space) ────────────────────
 
     def decide_action(self, agent_id: str) -> dict:
         """
-        에이전트의 이번 턴 행동을 확률적으로 결정.
-        반환: {"action": str, "target_post"?: OASISPost, "target_agent_id"?: str}
+        Probabilistically decide the agent's action for this turn.
+        Returns: {"action": str, "target_post"?: OASISPost, "target_agent_id"?: str}
         """
         has_posts = len(self.posts) > 0
         following = self._graph.get_following(agent_id)
@@ -140,7 +140,7 @@ class OASISEnvironment:
         result: dict = {"action": action}
 
         if action in ("repost", "like") and has_posts:
-            # 트렌딩 상위 5개 중 랜덤 선택
+            # Random selection from top 5 trending
             pool = sorted(
                 self.posts,
                 key=lambda p: len(p.likes) + len(p.reposts),

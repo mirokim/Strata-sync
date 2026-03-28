@@ -1,14 +1,14 @@
 """
-Strata Sync Source Management Bot — 볼트 관리 + Slack 봇 통합 GUI
+Strata Sync Source Management Bot — Vault Management + Slack Bot Integrated GUI
 ──────────────────────────────────────────────────────────────────
-기능:
-  - vault MD 파일 스캔 + keyword_index.json 자동 관리
-  - wikilink 주입 + 클러스터 링크 강화
-  - index_YYYYMMDD.md 자동 갱신 (타이머 1h / 5h)
-  - index MD 파일 브라우저 (생성된 인덱스 열람)
-  - Slack 봇 (Socket Mode, 페르소나 + RAG)
+Features:
+  - Vault MD file scan + keyword_index.json automatic management
+  - Wikilink injection + cluster link enhancement
+  - index_YYYYMMDD.md automatic refresh (timer 1h / 5h)
+  - Index MD file browser (view generated indices)
+  - Slack bot (Socket Mode, persona + RAG)
 
-실행:
+Run:
     python bot.py
 """
 
@@ -23,14 +23,14 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# .env 파일 로드 (시크릿 우선순위: .env > config.json > UI 입력)
+# Load .env file (secret priority: .env > config.json > UI input)
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
-    pass  # python-dotenv 없으면 env vars만 사용
+    pass  # Use only env vars if python-dotenv is not installed
 
-# 모듈 경로 추가
+# Add module path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from modules.vault_scanner import scan_vault, find_active_folders
@@ -39,38 +39,38 @@ from modules.claude_client import ClaudeClient
 from modules.wikilink_updater import process_folder
 from modules.index_generator import generate_index
 from modules.progress_updater import ProgressUpdater
-from modules.mirofish_runner import run_simulation as mirofish_run_python, STANCE_KO
+from modules.mirofish_runner import run_simulation as mirofish_run_python, STANCE_LABEL
 from modules.constants import DEFAULT_HAIKU_MODEL, DEFAULT_SONNET_MODEL, KEYWORD_INDEX_REL_PATH
 from modules.rag_electron import RAG_API_BASE
 from modules.api_keys import get_anthropic_key
 from modules.config_schema import BotConfig, default_config
 
-CONFIG_PATH = Path(__file__).parent / "config.json"  # --config 인자로 오버라이드 가능
+CONFIG_PATH = Path(__file__).parent / "config.json"  # Can be overridden with --config argument
 
 
 def _clean_search_query(q: str) -> str:
     """
-    검색용 쿼리에서 메타 지시 표현을 제거합니다.
-    BM25/TF-IDF가 "보고서", "분석", "방향" 같은 볼트 공통 단어에 오염되지 않도록 보정.
+    Remove meta-instruction expressions from a search query.
+    Prevents BM25/TF-IDF from being polluted by common vault words like "report", "analysis", "direction".
 
-    적용 순서:
-      1. 복합 메타동사: "분석해줘", "정리해줘", "제안해줘" 등
-      2. 메타명사+동작: "보고서 써줘", "리포트 만들어줘"
-      3. 순수 요청 어미: "알려줘", "찾아줘", "해줘", "줘" 등
-    원본이 전부 제거되면 원본 그대로 반환.
+    Application order:
+      1. Compound meta-verbs: Korean action verbs with request endings
+      2. Meta-noun + action verb: "write a report", "create a report"
+      3. Pure request endings: Korean request suffixes
+    Returns original query if everything is stripped.
     """
     out = q.strip()
-    # 1. 복합 메타동사 (동사 자체가 메타 의미 + 요청 어미)
+    # 1. Compound meta-verbs (verb itself has meta meaning + request ending) — Korean patterns kept as-is
     out = re.sub(
         r'\s*(분석|정리|요약|검토|설명|비교|제안|작성|소개|추천|추출|뽑아)(해줘|해주세요|해봐줘|해봐|줘|주세요|해)\s*$',
         '', out, flags=re.IGNORECASE,
     )
-    # 2. 메타명사 + 동작동사: "보고서 써줘", "리포트 만들어줘"
+    # 2. Meta-noun + action verb: e.g. "write a report" — Korean patterns kept as-is
     out = re.sub(
-        r'\s*(보고서|리포트|report)\s*[\w가-힣]*(써|만들|작성|export|pdf)[\w가-힣\s]*$',
+        r'\s*(Report|리포트|report)\s*[\w가-힣]*(써|만들|작성|export|pdf)[\w가-힣\s]*$',
         '', out, flags=re.IGNORECASE,
     )
-    # 3. 순수 요청 어미
+    # 3. Pure request endings — Korean patterns kept as-is
     out = re.sub(
         r'\s*(알려줘|알려주세요|찾아줘|찾아주세요|말해줘|말해주세요|해줘|해주세요|줘|주세요|부탁해|부탁합니다)\s*$',
         '', out, flags=re.IGNORECASE,
@@ -90,7 +90,7 @@ def load_config() -> BotConfig:
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))  # type: ignore[arg-type]
         except Exception:
             pass
-    # env vars override config.json (시크릿은 .env에서만 관리)
+    # env vars override config.json (secrets managed only in .env)
     if os.getenv("ANTHROPIC_API_KEY"):
         cfg["claude_api_key"] = os.environ["ANTHROPIC_API_KEY"]
     if os.getenv("SLACK_BOT_TOKEN"):
@@ -103,8 +103,8 @@ def load_config() -> BotConfig:
 _SECRET_KEYS = {"claude_api_key", "slack_bot_token", "slack_app_token"}
 
 def save_config(cfg: dict):
-    # 로컬 config.json에 전체 저장 (시크릿 포함).
-    # env var가 있으면 load_config에서 덮어씌우므로 env 우선순위는 유지됨.
+    # Save entire config to local config.json (including secrets).
+    # env var priority is maintained since load_config overwrites from env vars.
     CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -130,32 +130,32 @@ class VaultBot:
         api_key = get_anthropic_key(cfg)
 
         if not vault_path or not Path(vault_path).exists():
-            self.log("❌ 볼트 경로가 없거나 존재하지 않습니다.")
+            self.log("❌ Vault path is missing or does not exist.")
             return
 
         self.log(f"\n{'='*50}")
-        self.log(f"🚀 실행 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self.log(f"볼트: {vault_path}")
+        self.log(f"🚀 Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log(f"Vault: {vault_path}")
 
-        # 1. 볼트 스캔
-        self.log("\n📂 볼트 스캔 중...")
+        # 1. Vault scan
+        self.log("\n📂 Scanning vault...")
         docs = scan_vault(vault_path)
-        self.log(f"  총 {len(docs)}개 MD 파일 발견")
+        self.log(f"  Found {len(docs)} MD files")
 
         active_folders = find_active_folders(vault_path)
-        self.log(f"  active 폴더: {len(active_folders)}개 → {[Path(f).name for f in active_folders]}")
+        self.log(f"  Active folders: {len(active_folders)} → {[Path(f).name for f in active_folders]}")
 
-        # 2. Keyword store 로드
+        # 2. Load keyword store
         store = KeywordStore(vault_path, cfg.get("keyword_index_path", KEYWORD_INDEX_REL_PATH))
         loaded = store.load()
-        self.log(f"\n🔑 키워드 인덱스: {'로드됨' if loaded else '새로 생성'} ({store.count()}개 키워드)")
+        self.log(f"\n🔑 Keyword index: {'loaded' if loaded else 'newly created'} ({store.count()} keywords)")
 
-        # 3. Claude로 새 키워드 발견 (API key 있을 때만)
+        # 3. Discover new keywords with Claude (only when API key is available)
         if api_key:
-            self.log("\n🤖 Claude Haiku — 키워드 발견 중...")
+            self.log("\n🤖 Claude Haiku — Discovering keywords...")
             try:
                 client = ClaudeClient(api_key, cfg.get("worker_model", DEFAULT_HAIKU_MODEL))
-                # active 폴더의 최신 문서 샘플
+                # Sample latest documents from active folders
                 sample_docs = []
                 for d in docs:
                     if any(d.path.startswith(f) for f in active_folders[:1]):
@@ -177,40 +177,40 @@ class VaultBot:
                         if kw and hub:
                             store.upsert(kw, hub, display)
                             added += 1
-                    self.log(f"  {added}개 키워드 발견/갱신")
+                    self.log(f"  {added} keywords discovered/updated")
                 else:
-                    self.log("  active 폴더에 문서 없음 — 스킵")
+                    self.log("  No documents in active folder — skipping")
             except Exception as e:
-                self.log(f"  ⚠️ Claude API 오류: {e}")
+                self.log(f"  ⚠️ Claude API error: {e}")
         else:
-            self.log("\n⚠️  API 키 없음 — 키워드 발견 스킵 (기존 인덱스 사용)")
+            self.log("\n⚠️  No API key — skipping keyword discovery (using existing index)")
 
         store.save()
-        self.log(f"  키워드 인덱스 저장 완료 ({store.count()}개)")
+        self.log(f"  Keyword index saved ({store.count()} keywords)")
 
-        # 4. active 폴더별 wikilink 처리
+        # 4. Process wikilinks per active folder
         keyword_map = store.to_inject_map()
         total_updated = 0
         total_hits: dict = {}
 
         for folder in active_folders:
-            self.log(f"\n🔗 wikilink 처리: {Path(folder).name}")
+            self.log(f"\n🔗 Wikilink processing: {Path(folder).name}")
             result = process_folder(folder, keyword_map, log_fn=self.log)
             total_updated += result["updated"]
             for kw, cnt in result["keyword_hits"].items():
                 total_hits[kw] = total_hits.get(kw, 0) + cnt
 
-        self.log(f"\n  총 {total_updated}개 파일 업데이트")
+        self.log(f"\n  Total {total_updated} files updated")
         if total_hits:
             top = sorted(total_hits.items(), key=lambda x: -x[1])[:5]
-            self.log(f"  키워드 히트 TOP5: {', '.join(f'{k}({v})' for k,v in top)}")
+            self.log(f"  Keyword hit TOP5: {', '.join(f'{k}({v})' for k,v in top)}")
 
-        # 5. index 갱신 (최신 active 폴더)
+        # 5. Refresh index (latest active folder)
         if active_folders:
-            self.log(f"\n📋 인덱스 갱신: {Path(active_folders[0]).name}")
+            self.log(f"\n📋 Index refresh: {Path(active_folders[0]).name}")
             generate_index(active_folders[0], log_fn=self.log)
 
-        self.log(f"\n✅ 완료: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log(f"\n✅ Complete: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.on_done()
 
     def run_once(self):
@@ -218,7 +218,7 @@ class VaultBot:
             try:
                 self._run_cycle()
             except Exception as e:
-                self.log(f"❌ 치명적 오류: {e}")
+                self.log(f"❌ Fatal error: {e}")
             finally:
                 self.on_done()
         t = threading.Thread(target=_safe, daemon=True)
@@ -232,10 +232,10 @@ class VaultBot:
                 try:
                     self._run_cycle()
                 except Exception as e:
-                    self.log(f"❌ 치명적 오류: {e}")
+                    self.log(f"❌ Fatal error: {e}")
                 finally:
                     self.on_done()
-                # interval 대기 (10초마다 stop 체크)
+                # Wait for interval (check stop every 10 seconds)
                 end_time = time.time() + interval_hours * 3600
                 while time.time() < end_time and not self._stop.is_set():
                     time.sleep(10)
@@ -252,11 +252,11 @@ class VaultBot:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class SlackBotRunner:
-    """Slack SocketModeHandler를 백그라운드 스레드로 관리."""
+    """Manages Slack SocketModeHandler in a background thread."""
 
     def __init__(self, cfg: dict, log_fn, on_status_fn):
         self.cfg = cfg
-        self._log = log_fn          # thread-safe (after() 기반)
+        self._log = log_fn          # thread-safe (after() based)
         self._on_status = on_status_fn
         self._handler = None
         self._thread: threading.Thread | None = None
@@ -265,13 +265,13 @@ class SlackBotRunner:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> bool:
-        """슬랙 봇 시작. 성공 시 True."""
+        """Start the Slack bot. Returns True on success."""
         try:
             from slack_bolt import App
             from slack_bolt.adapter.socket_mode import SocketModeHandler
             from slack_sdk import WebClient
         except ImportError:
-            self._log("❌ slack-bolt 패키지 필요: pip install slack-bolt")
+            self._log("❌ slack-bolt package required: pip install slack-bolt")
             return False
 
         from modules.persona_config import resolve_persona
@@ -285,15 +285,15 @@ class SlackBotRunner:
         bot_token  = cfg.get("slack_bot_token", "").strip()
         app_token  = cfg.get("slack_app_token", "").strip()
         vault_path = cfg.get("vault_path", "").strip()
-        # api_keys 모듈이 우선순위(Electron > config > env)를 단일 관리
+        # api_keys module manages priority (Electron > config > env) in one place
         api_key    = get_anthropic_key(cfg)
         top_n      = cfg.get("slack_rag_top_n", 5)
 
         if not bot_token or not app_token:
-            self._log("❌ slack_bot_token / slack_app_token 이 설정에 없습니다.")
+            self._log("❌ slack_bot_token / slack_app_token not found in settings.")
             return False
         if not vault_path or not Path(vault_path).exists():
-            self._log(f"❌ 볼트 경로 없음: {vault_path!r}")
+            self._log(f"❌ Vault path not found: {vault_path!r}")
             return False
 
         import re as _re
@@ -302,46 +302,46 @@ class SlackBotRunner:
 
         PERSONA_TAG_RE = _re.compile(r"\[([^\]]+)\]")
         BOT_MENTION_RE = _re.compile(r"<@[A-Z0-9]+>")
-        # MiroFish 자연어 감지: 🐟 이모지, mirofish 키워드, 또는 시뮬레이션 동작어
-        # 트리거: "시뮬레이션" 또는 "시뮬" (단독 키워드)
+        # MiroFish natural language detection: 🐟 emoji, mirofish keyword, or simulation action words
+        # Trigger: Korean "시뮬레이션" or "시뮬" (standalone keywords)
         MIROFISH_RE = _re.compile(
             r"시뮬레이션|시뮬",
             _re.IGNORECASE,
         )
-        # 보고서 생성 인텐트: chatStore.ts의 REPORT_INTENT_RE와 동일
+        # Report generation intent: same as chatStore.ts REPORT_INTENT_RE — Korean patterns kept as-is
         REPORT_INTENT_RE = _re.compile(
-            r"보고서.{0,20}(써|만들|작성|뽑아|정리|export|pdf)|(대화|채팅).{0,20}보고서|보고서.{0,20}(대화|채팅)|(pdf|PDF).{0,20}(만들|보고서|저장|export)",
+            r"Report.{0,20}(써|만들|작성|뽑아|정리|export|pdf)|(대화|채팅).{0,20}Report|Report.{0,20}(대화|채팅)|(pdf|PDF).{0,20}(만들|Report|저장|export)",
             _re.IGNORECASE,
         )
 
-        # 페르소나 수: "5명", "10명 으로"
+        # Number of personas: "5명", "10명 으로" — Korean patterns kept as-is
         MIRO_PERSONAS_RE = _re.compile(r"(\d{1,2})\s{0,3}명")
-        # 라운드 수: "3라운드", "5 라운드", "3라운드로"
+        # Number of rounds: "3라운드", "5 라운드", "3라운드로" — Korean patterns kept as-is
         MIRO_ROUNDS_RE   = _re.compile(r"(\d{1,2})\s{0,3}라운드로?")
-        # 타겟 세그먼트: "코어", "캐주얼", "하드코어", "라이트", "신규", "복귀" 유저
+        # Target segment: Korean gaming audience terms — Korean patterns kept as-is
         MIRO_SEGMENT_RE  = _re.compile(
             r"(코어\s*게이머|캐주얼\s*게이머|하드코어\s*게이머|라이트\s*유저|신규\s*유저|복귀\s*유저|"
             r"코어\s*유저|캐주얼\s*유저|하드코어\s*유저|[가-힣a-zA-Z]+\s*세그먼트)",
             _re.IGNORECASE,
         )
-        # A vs B 비교: "X vs Y", "X 대비 Y", "X 와 Y 비교"
+        # A vs B comparison: "X vs Y", "X 대비 Y", "X 와 Y 비교" — Korean patterns kept as-is
         MIRO_VS_RE = _re.compile(
             r"(.+?)\s+(?:vs\.?|대비|와\s+(.+?)\s+비교)\s+(.+)",
             _re.IGNORECASE,
         )
-        # 프리셋 참조: "[프리셋:이름]" 또는 "[preset:name]"
+        # Preset reference: "[프리셋:name]" or "[preset:name]" — Korean patterns kept as-is
         MIRO_PRESET_RE = _re.compile(r"\[(?:프리셋|preset)\s*:\s*([^\]]+)\]", _re.IGNORECASE)
-        # MiroFish 결과 캐시: (topic, num_personas, num_rounds) → (result, timestamp)
+        # MiroFish result cache: (topic, num_personas, num_rounds) → (result, timestamp)
         _miro_cache: dict[tuple, tuple] = {}
         _miro_cache_lock = threading.Lock()
-        _MIRO_CACHE_TTL = 1800   # 30분
-        _MIRO_CACHE_MAX = 200    # 캐시 최대 항목 수
-        # 스레드/DM별 대화 히스토리 (key: "channel:thread_ts", 최대 키 1000개)
+        _MIRO_CACHE_TTL = 1800   # 30 minutes
+        _MIRO_CACHE_MAX = 200    # Max cache entries
+        # Per-thread/DM conversation history (key: "channel:thread_ts", max 1000 keys)
         _MAX_HISTORY_KEYS = 1000
         _conv_history: dict[str, list[dict]] = {}
         _conv_history_lock = threading.Lock()
 
-        # ── 슬랙 사용자별 장기 기억 ──────────────────────────────────────────
+        # ── Per-Slack-user long-term memory ──────────────────────────────────
         _USER_MEMORY_PATH = Path(__file__).parent / "user_memory.json"
         _user_memory: dict[str, str] = {}
 
@@ -361,7 +361,7 @@ class SlackBotRunner:
                 pass
 
         def _auto_update_memory(user_id: str, history: list[dict], claude):
-            """매 5턴마다 대화를 요약해 사용자 기억 갱신."""
+            """Summarize conversation and update user memory every 5 turns."""
             if not claude or not user_id or len(history) < 10:
                 return
             turn_count = len(history) // 2
@@ -373,12 +373,12 @@ class SlackBotRunner:
                 for m in history[-10:]
             )
             summary_prompt = (
-                "아래 대화를 300자 이내로 핵심 결정사항·합의·중요 컨텍스트 중심으로 요약하세요. 요약만 출력."
+                "Summarize the conversation below within 300 characters, focusing on key decisions, agreements, and important context. Output summary only."
             )
             if existing:
-                summary_prompt += f"\n\n기존 기억:\n{existing}"
+                summary_prompt += f"\n\nExisting memory:\n{existing}"
             try:
-                summary = claude.complete(summary_prompt, f"대화:\n{hist_text}", max_tokens=400).strip()
+                summary = claude.complete(summary_prompt, f"Conversation:\n{hist_text}", max_tokens=400).strip()
                 if summary:
                     _user_memory[user_id] = summary
                     _save_user_memory()
@@ -396,7 +396,7 @@ class SlackBotRunner:
                 text = text[:m.start()] + text[m.end():]
             return tag, text.strip()
 
-        _VISION_MODEL = DEFAULT_SONNET_MODEL  # 항상 Claude 사용 (GPT/Gemini 설정 무시)
+        _VISION_MODEL = DEFAULT_SONNET_MODEL  # Always use Claude (ignore GPT/Gemini settings)
 
         # Slack CDN domains — only fetch images from these trusted hosts
         _SLACK_CDN_DOMAINS = ("files.slack.com", "slack-files.com", "slack-edge.com", "files.slack-edge.com")
@@ -415,9 +415,9 @@ class SlackBotRunner:
 
         def _fetch_via_files_info(file_id: str) -> bytes | None:
             """
-            Enterprise Grid 폴백: files.info API로 썸네일 URL을 받아 다운로드.
-            url_private_download는 SSO에 막히지만 thumb_* URL은 별도 CDN에서 서빙되어
-            봇 토큰 Authorization 헤더로 접근 가능한 경우가 많음.
+            Enterprise Grid fallback: get thumbnail URL via files.info API and download.
+            url_private_download is blocked by SSO, but thumb_* URLs are served from a separate CDN
+            and are often accessible with bot token Authorization header.
             """
             import requests as _req
             try:
@@ -431,9 +431,9 @@ class SlackBotRunner:
                         continue
                     # SSRF guard: only fetch from Slack's own CDN domains
                     if not _is_safe_slack_url(thumb_url):
-                        self._log(f"[Vision] SSRF 차단: 허용되지 않은 URL {thumb_url[:80]}")
+                        self._log(f"[Vision] SSRF blocked: disallowed URL {thumb_url[:80]}")
                         continue
-                    self._log(f"[Vision] Enterprise thumb 시도: {key}")
+                    self._log(f"[Vision] Enterprise thumb attempt: {key}")
                     r = _req.get(
                         thumb_url,
                         headers={"Authorization": f"Bearer {bot_token}"},
@@ -441,72 +441,72 @@ class SlackBotRunner:
                         timeout=15,
                     )
                     if r.ok and r.content and r.content[:1] != b"<":
-                        self._log(f"[Vision] thumb 다운로드 완료: {len(r.content)}바이트")
+                        self._log(f"[Vision] Thumb download complete: {len(r.content)} bytes")
                         return r.content
             except Exception as e:
-                self._log(f"[Vision] files.info 실패: {e}")
+                self._log(f"[Vision] files.info failed: {e}")
             return None
 
-        # Anthropic base64 이미지 한도: 5MB base64 ≈ 3.75MB raw → 여유분 포함 3.5MB
+        # Anthropic base64 image limit: 5MB base64 ≈ 3.75MB raw → 3.5MB with buffer
         _MAX_IMG_BYTES = 3_500_000
 
         def _shrink_image(raw: bytes, mimetype: str, file_id: str | None) -> tuple[bytes, str] | None:
-            """이미지를 Anthropic 허용 범위(≤3.5MB)로 줄임. PIL 리사이즈 → Slack thumb 순 폴백."""
-            # PIL 리사이즈 시도
+            """Shrink image to Anthropic allowed range (≤3.5MB). PIL resize → Slack thumb fallback."""
+            # Attempt PIL resize
             try:
                 from PIL import Image
                 import io as _io
                 # Decompression bomb protection: limit to 50MP
                 if len(raw) > 20_000_000:
-                    self._log(f"[Vision] 이미지 크기 초과 ({len(raw)//1024//1024}MB), 건너뜀")
+                    self._log(f"[Vision] Image size exceeded ({len(raw)//1024//1024}MB), skipping")
                     raise ValueError("raw image too large")
                 Image.MAX_IMAGE_PIXELS = 50_000_000
                 img = Image.open(_io.BytesIO(raw))
-                # 장변 1568px 이하로 축소 (Anthropic 권장 최대치)
+                # Resize to max 1568px on longest side (Anthropic recommended max)
                 if max(img.size) > 1568:
                     ratio = 1568 / max(img.size)
                     img = img.resize((int(img.size[0] * ratio), int(img.size[1] * ratio)), Image.LANCZOS)
-                # 투명도 없으면 JPEG 변환 (용량 절감)
+                # Convert to JPEG if no transparency (size reduction)
                 if img.mode in ("RGBA", "P", "LA"):
                     img = img.convert("RGB")
                 buf = _io.BytesIO()
                 img.save(buf, format="JPEG", quality=85, optimize=True)
                 result = buf.getvalue()
-                self._log(f"[Vision] PIL 리사이즈 완료: {len(result)//1024}KB")
+                self._log(f"[Vision] PIL resize complete: {len(result)//1024}KB")
                 return result, "image/jpeg"
             except ImportError:
-                self._log("[Vision] PIL 없음 → Slack thumb 시도")
+                self._log("[Vision] PIL not available → trying Slack thumb")
             except Exception as e:
-                self._log(f"[Vision] PIL 오류: {e}")
-            # Slack thumb 폴백 (files.info → thumb_1024/720/480)
+                self._log(f"[Vision] PIL error: {e}")
+            # Slack thumb fallback (files.info → thumb_1024/720/480)
             if file_id:
                 thumb = _fetch_via_files_info(file_id)
                 if thumb:
-                    self._log(f"[Vision] Slack thumb 사용: {len(thumb)//1024}KB")
+                    self._log(f"[Vision] Using Slack thumb: {len(thumb)//1024}KB")
                     return thumb, "image/jpeg"
             return None
 
         def _download_images(image_files: list) -> list[dict]:
-            """이미지 다운로드 → [{"data": base64, "mediaType": str}] 리스트 반환."""
+            """Download images → return [{"data": base64, "mediaType": str}] list."""
             import base64 as _b64
             results = []
             for f in image_files[:3]:
                 url = f.get("url_private_download") or f.get("url_private")
                 raw = download_slack_file(url or "", bot_token, log_fn=self._log) if url else None
                 file_id = f.get("id")
-                # Enterprise Grid 폴백: SSO 차단 시 files.info → thumb URL 시도
+                # Enterprise Grid fallback: files.info → thumb URL when SSO blocks
                 if not raw and file_id:
                     raw = _fetch_via_files_info(file_id)
                 if not raw:
-                    self._log("[Vision] 다운로드 실패")
+                    self._log("[Vision] Download failed")
                     continue
                 mimetype = f.get("mimetype") or "image/png"
-                # 너무 크면 리사이즈 (Anthropic 5MB base64 한도)
+                # Resize if too large (Anthropic 5MB base64 limit)
                 if len(raw) > _MAX_IMG_BYTES:
-                    self._log(f"[Vision] {len(raw)//1024}KB 초과 → 리사이즈")
+                    self._log(f"[Vision] {len(raw)//1024}KB exceeded → resizing")
                     shrunk = _shrink_image(raw, mimetype, file_id)
                     if not shrunk:
-                        self._log("[Vision] 리사이즈 실패 → 스킵")
+                        self._log("[Vision] Resize failed → skipping")
                         continue
                     raw, mimetype = shrunk
                 self._log(f"[Vision] {len(raw)//1024}KB magic={raw[:4].hex()}")
@@ -514,7 +514,7 @@ class SlackBotRunner:
             return results
 
         def _describe_images(downloaded: list[dict], query: str) -> str | None:
-            """다운로드된 이미지들을 Claude로 묘사 (RAG 쿼리 보강용). 실패 시 None."""
+            """Describe downloaded images with Claude (for RAG query augmentation). Returns None on failure."""
             if not api_key:
                 return None
             content_parts: list = [
@@ -523,8 +523,8 @@ class SlackBotRunner:
             ]
             desc_prompt = (
                 f"{query}\n\n"
-                "이미지에서 보이는 캐릭터의 외형(복장, 색상, 헤어, 표정, 분위기, 소품 등)을 "
-                "구체적으로 묘사해주세요. 묘사만 출력, 평가나 결론은 제외."
+                "Describe in detail the character's appearance in the image (outfit, colors, hair, expression, atmosphere, accessories, etc.). "
+                "Output description only, no evaluation or conclusions."
             )
             content_parts.append({"type": "text", "text": desc_prompt})
             try:
@@ -532,22 +532,22 @@ class SlackBotRunner:
                 msg = _ant.Anthropic(api_key=api_key).messages.create(
                     model=_VISION_MODEL,
                     max_tokens=800,
-                    system="당신은 게임 캐릭터 아트 분석 전문가입니다. 이미지를 객관적으로 묘사합니다.",
+                    system="You are a game character art analysis expert. You describe images objectively.",
                     messages=[{"role": "user", "content": content_parts}],
                 )
                 return msg.content[0].text
             except Exception as e:
-                self._log(f"[Vision] 묘사 오류: {e}")
+                self._log(f"[Vision] Description error: {e}")
                 return None
 
         _IMAGE_WORDS = ["이미지", "사진", "그림", "원화", "일러스트", "레퍼런스", "image", "photo", "pic"]
-        # 이미지 검색 시 제거할 동작/수량 단어 (주제어만 남기기 위함)
+        # Action/quantity words to remove during image search (to keep only topic words) — Korean keywords kept as-is
         _ACTION_WORDS = ["보여줘", "보여주세요", "찾아줘", "찾아주세요", "보내줘", "보내주세요",
                          "줘", "주세요", "검색해줘", "있어", "있나요", "있어요",
                          "하나", "한장", "몇개", "주", "좀", "제발", "꼭"]
 
         def _upload_images_to_slack(image_paths: list[str], channel: str, thread_ts: str | None) -> int:
-            """볼트 이미지를 Slack에 업로드. 업로드 성공 건수 반환."""
+            """Upload vault images to Slack. Returns number of successful uploads."""
             import requests as _req
             uploaded = 0
             for path in image_paths[:3]:
@@ -564,15 +564,15 @@ class SlackBotRunner:
                         kw["thread_ts"] = thread_ts
                     web.files_completeUploadExternal(**kw)
                     uploaded += 1
-                    self._log(f"[Image] 업로드 완료: {filename}")
+                    self._log(f"[Image] Upload complete: {filename}")
                 except Exception as e:
-                    self._log(f"[Image] 업로드 실패 ({os.path.basename(path)}): {e}")
+                    self._log(f"[Image] Upload failed ({os.path.basename(path)}): {e}")
             return uploaded
 
-        _SLACK_MAX = 3800  # Slack 블록 실질 한도 (4000자 버퍼)
+        _SLACK_MAX = 3800  # Slack block effective limit (4000 char buffer)
 
         def _say_long(text: str, say_fn, thread_ts: str | None, *, update_ts: str | None = None, channel: str | None = None):
-            """4000자 초과 텍스트를 자동 분할하여 게시. update_ts가 있으면 첫 청크는 chat_update."""
+            """Auto-split text exceeding 4000 chars for posting. First chunk uses chat_update if update_ts is set."""
             chunks, buf = [], ""
             for line in text.splitlines(keepends=True):
                 if len(buf) + len(line) > _SLACK_MAX:
@@ -600,16 +600,16 @@ class SlackBotRunner:
                              context: str | None, sim_images: list | None,
                              segment: str | None, channel: str, think_ts: str | None,
                              preset_personas: list[dict] | None = None) -> dict | None:
-            """단일 MiroFish 시뮬레이션 실행 (Electron → Python 폴백). 결과 dict 반환."""
+            """Run a single MiroFish simulation (Electron → Python fallback). Returns result dict."""
 
             def update(msg: str):
                 if think_ts:
                     try:
                         web.chat_update(channel=channel, ts=think_ts, text=msg)
                     except Exception as _ue:
-                        self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                        self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
 
-            # 캐시 체크 — context 해시 포함 (같은 토픽이라도 맥락이 다르면 별도 캐시)
+            # Cache check — includes context hash (different context = separate cache even for same topic)
             _ctx_hash = hash(context) if context else 0
             _img_flag = bool(sim_images)
             cache_key = (topic, num_personas, num_rounds, _ctx_hash, _img_flag)
@@ -620,19 +620,19 @@ class SlackBotRunner:
                 cached_result, cached_at = _cached
                 if now_ts - cached_at < _MIRO_CACHE_TTL:
                     age_min = int((now_ts - cached_at) / 60)
-                    update(f"🐟 *캐시 결과 사용* ({age_min}분 전)\n주제: *{topic}*\n_(새 결과를 원하면 '새로 시뮬레이션' 을 입력하세요)_")
-                    self._log(f"[MiroFish] 캐시 히트: {topic!r} ({age_min}분 경과)")
+                    update(f"🐟 *Using cached result* ({age_min}min ago)\nTopic: *{topic}*\n_(Enter 'new simulation' for fresh results)_")
+                    self._log(f"[MiroFish] Cache hit: {topic!r} ({age_min}min elapsed)")
                     return cached_result
 
-            # Electron 위임 + 하트비트 스레드 (중간 진행 보고)
+            # Electron delegation + heartbeat thread (intermediate progress reports)
             if not is_electron_alive():
-                self._log("[MiroFish] Electron 오프라인 → 시뮬레이션 실행 불가")
+                self._log("[MiroFish] Electron offline → simulation unavailable")
                 update(
-                    f"🐟 *MiroFish 시뮬레이션 불가*\n주제: *{topic}*\n\n"
-                    f"🔴 *샌드박스 맵 앱이 응답하지 않습니다.*\n\n"
-                    f"*확인해주세요:*\n"
-                    f"• 샌드박스 맵 앱이 실행 중인지 확인\n"
-                    f"• 앱 실행 직후라면 30초 정도 기다린 뒤 다시 요청"
+                    f"🐟 *MiroFish Simulation Unavailable*\nTopic: *{topic}*\n\n"
+                    f"🔴 *Sandbox Map app is not responding.*\n\n"
+                    f"*Please check:*\n"
+                    f"• Verify the Sandbox Map app is running\n"
+                    f"• If the app was just launched, wait about 30 seconds and try again"
                 )
                 return None
 
@@ -651,7 +651,7 @@ class SlackBotRunner:
             electron_thread = threading.Thread(target=_electron_call, daemon=True)
             electron_thread.start()
 
-            # 하트비트: 20초마다 /mirofish-progress 폴링 → 실시간 피드 업데이트
+            # Heartbeat: poll /mirofish-progress every 20s → real-time feed update
             elapsed = 0
             _shown_post_count = 0
             while not _done_event.wait(timeout=20):
@@ -668,7 +668,7 @@ class SlackBotRunner:
                         _shown_post_count = len(partial_feed)
                         lines = []
                         for p in new_posts[-5:]:  # 최신 5개만
-                            st = STANCE_KO.get(p.get("stance", ""), p.get("stance", ""))
+                            st = STANCE_LABEL.get(p.get("stance", ""), p.get("stance", ""))
                             lines.append(f"*[R{p['round']}] {p['personaName']}* ({st})\n> {p['content']}")
                         feed_preview = "\n\n".join(lines)
                         update(
@@ -678,30 +678,30 @@ class SlackBotRunner:
                         )
                     else:
                         update(
-                            f"🐟 *MiroFish 시뮬레이션 진행 중...*\n"
-                            f"주제: *{topic}* | 페르소나: {num_personas}명 | 라운드: {num_rounds}회\n"
+                            f"🐟 *MiroFish simulation in progress...*\n"
+                            f"Topic: *{topic}* | Personas: {num_personas} | Rounds: {num_rounds}\n"
                             f"_(⏱️ {elapsed}초 경과)_"
                         )
                 except Exception:
                     update(
-                        f"🐟 *MiroFish 시뮬레이션 진행 중...*\n"
-                        f"주제: *{topic}* | 페르소나: {num_personas}명 | 라운드: {num_rounds}회\n"
+                        f"🐟 *MiroFish simulation in progress...*\n"
+                        f"Topic: *{topic}* | Personas: {num_personas} | Rounds: {num_rounds}\n"
                         f"_(⏱️ {elapsed}초 경과)_"
                     )
 
             result = _result_holder[0]
 
-            # 에러 응답 처리: {'feed': [], 'report': '오류: ...'} 또는 in-flight 응답 → None으로 처리해 폴백 진입
+            # Error response handling: {'feed': [], 'report': 'Error: ...'} or in-flight response → treat as None for fallback
             _report_str = result.get("report", "") if isinstance(result, dict) else ""
             if isinstance(result, dict) and not result.get("feed") and isinstance(_report_str, str) and (
-                _report_str.startswith("오류:") or "이미 실행 중" in _report_str
+                _report_str.startswith("오류:") or "이미 실행 중" in _report_str  # Korean error markers kept for Electron compatibility
             ):
                 self._log(f"[MiroFish] Electron 오류 응답: {result.get('report', '')[:100]}")
                 result = None
 
-            # Electron 폴백: Python 직접 실행
+            # Electron fallback: direct Python execution
             if result is None:
-                self._log("[MiroFish] Electron 미실행 → Python 폴백")
+                self._log("[MiroFish] Electron not running → Python fallback")
                 live_key = get_anthropic_key(self.cfg)
                 if not live_key:
                     return None
@@ -711,19 +711,19 @@ class SlackBotRunner:
                 round_count = [0]
                 def progress_log(msg: str):
                     self._log(msg)
-                    if "[MiroFish] 라운드" in msg:
+                    if "[MiroFish] Round" in msg or "[MiroFish] 라운드" in msg:
                         round_count[0] += 1
                         update(
-                            f"🐟 *MiroFish 시뮬레이션*\n주제: *{topic}*\n"
-                            f"라운드 {round_count[0]}/{num_rounds} 진행 중..."
+                            f"🐟 *MiroFish Simulation*\nTopic: *{topic}*\n"
+                            f"Round {round_count[0]}/{num_rounds} in progress..."
                         )
-                # NOTE: mirofish_runner.run_simulation은 segment 미지원 — Electron 경로에서만 segment가 반영됨
+                # NOTE: mirofish_runner.run_simulation does not support segment — segment is only applied in the Electron path
                 result = mirofish_run_python(topic, num_personas, num_rounds, claude_cli, log_fn=progress_log, context=context)
 
             if result:
                 with _miro_cache_lock:
                     _miro_cache[cache_key] = (result, time.time())
-                    # 캐시 크기 초과 시 오래된 항목부터 제거
+                    # Remove oldest entries when cache exceeds max size
                     if len(_miro_cache) > _MIRO_CACHE_MAX:
                         oldest_keys = sorted(_miro_cache, key=lambda k: _miro_cache[k][1])
                         for _k in oldest_keys[:len(_miro_cache) - _MIRO_CACHE_MAX]:
@@ -731,12 +731,12 @@ class SlackBotRunner:
 
             return result
 
-        # ── MiroFish HTML 보고서 생성 ────────────────────────────────────────────
+        # ── MiroFish HTML Report Generation ───────────────────────────────────────
         _REPORTS_DIR = Path(__file__).parent / "reports" / "mirofish"
         _CHAT_REPORTS_DIR = Path(__file__).parent / "reports" / "chat"
 
         def _generate_report_html(title: str, content: str) -> Path:
-            """LLM 보고서 마크다운을 wkhtmltopdf 호환 HTML 파일로 저장. 파일 경로 반환."""
+            """Save LLM report markdown as wkhtmltopdf-compatible HTML file. Returns file path."""
             _CHAT_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             import html as _html_mod
             _EMOJI_RE_R = _re.compile(
@@ -773,7 +773,7 @@ class SlackBotRunner:
                     table_rows.clear()
 
                 for line in lines:
-                    # 코드블록 토글
+                    # Code block toggle
                     if line.startswith("```"):
                         if not in_code:
                             if in_table:
@@ -789,11 +789,11 @@ class SlackBotRunner:
                         out.append(_html_mod.escape(line))
                         continue
 
-                    # 테이블 행 감지
+                    # Table row detection
                     if line.startswith("|") and line.endswith("|"):
                         if not in_table:
                             in_table = True
-                        # 구분선 행(|---|---| 패턴)은 건너뜀
+                        # Skip separator rows (|---|---| pattern)
                         if _re.fullmatch(r'[\|\-\s:]+', line):
                             continue
                         table_rows.append(line)
@@ -871,7 +871,7 @@ th {{ background:#f8fafc; font-weight:700; }}
 </div></body></html>"""
 
             filepath.write_text(html_content, encoding="utf-8")
-            self._log(f"[보고서] HTML 저장: {filepath}")
+            self._log(f"[Report] HTML saved: {filepath}")
             return filepath
 
         def _generate_mirofish_html(
@@ -879,7 +879,7 @@ th {{ background:#f8fafc; font-weight:700; }}
             num_personas: int, num_rounds: int,
             pm_brief: str | None = None,
         ) -> Path:
-            """MiroFish 결과를 HTML 파일로 저장. 파일 경로 반환."""
+            """Save MiroFish results as an HTML file. Returns file path."""
             _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
             now_str   = datetime.now().strftime("%Y%m%d_%H%M")
@@ -887,7 +887,7 @@ th {{ background:#f8fafc; font-weight:700; }}
             filename   = f"{now_str}_{safe_topic}.html"
             filepath   = _REPORTS_DIR / filename
 
-            # 스탠스별 집계
+            # Aggregate by stance
             stance_counts: dict[str, int] = {}
             for p in feed:
                 s = p.get("stance", "neutral")
@@ -900,16 +900,16 @@ th {{ background:#f8fafc; font-weight:700; }}
                              "neutral": "badge-neutral", "observer": "badge-observer"}
             AVATAR_INITIAL = {"supportive": "지", "opposing": "반", "neutral": "중", "observer": "관"}
 
-            # 보고서 마크다운 → 기본 HTML 변환
+            # Report markdown → basic HTML conversion
             import html as _html_mod
 
-            # wkhtmltopdf는 BMP 외 이모지(U+1F000+) 및 일부 특수문자를 ☒로 출력 → 사전 제거
+            # wkhtmltopdf renders emoji (U+1F000+) and some special chars as ☒ → pre-strip
             _EMOJI_RE = _re.compile(
                 "["
-                "\U0001F000-\U0001FFFF"   # 이모지 보충 블록 전체
-                "\u2600-\u27BF"           # 잡다한 기호 (☐☑☒ 등 포함)
-                "\u2B00-\u2BFF"           # 보충 화살표·기하
-                "\u23E9-\u23F3"           # 시계·미디어 기호
+                "\U0001F000-\U0001FFFF"   # Full emoji supplemental block
+                "\u2600-\u27BF"           # Misc symbols (including ☐☑☒)
+                "\u2B00-\u2BFF"           # Supplemental arrows/geometry
+                "\u23E9-\u23F3"           # Clock/media symbols
                 "\uFE00-\uFE0F"           # variation selector
                 "\U0001FA00-\U0001FA9F"   # 체스·기타 확장
                 "]+",
@@ -935,7 +935,7 @@ th {{ background:#f8fafc; font-weight:700; }}
                     elif escaped.strip() == "":
                         out.append("<br>")
                     else:
-                        # 인라인 볼드 **text**
+                        # Inline bold **text**
                         escaped = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
                         out.append(f"<p>{escaped}</p>")
                 return "\n".join(out)
@@ -954,7 +954,7 @@ th {{ background:#f8fafc; font-weight:700; }}
                 likes    = post.get("likes", 0)
                 reposts  = post.get("reposts", 0)
                 is_repost = post.get("actionType") == "repost"
-                repost_tag = '<div class="repost-label">↩ 리포스트</div>' if is_repost else ""
+                repost_tag = '<div class="repost-label">↩ Repost</div>' if is_repost else ""
                 feed_html_parts.append(f"""
                 <div class="feed-item">
                   <div class="feed-avatar">
@@ -965,14 +965,14 @@ th {{ background:#f8fafc; font-weight:700; }}
                       <span class="feed-name">{name}</span>
                       <span class="badge {badge}">{label_ko}</span>
                       <span class="feed-round">R{rnd}</span>
-                      <span class="feed-engagement">좋아요 {likes} / 리포스트 {reposts}</span>
+                      <span class="feed-engagement">Likes {likes} / Reposts {reposts}</span>
                     </div>
                     {repost_tag}
                     <div class="feed-content">{content}</div>
                   </div>
                 </div>""")
 
-            # 스탠스 분포 바
+            # Stance distribution bar
             stance_bar_parts = []
             for s, cnt in sorted(stance_counts.items(), key=lambda x: -x[1]):
                 color = STANCE_COLOR.get(s, "#888")
@@ -988,7 +988,7 @@ th {{ background:#f8fafc; font-weight:700; }}
             if pm_brief:
                 brief_section = f"""
             <div class="section">
-              <h2>PM 브리프</h2>
+              <h2>PM Brief</h2>
               <div class="report-text">{md_to_html(pm_brief)}</div>
             </div>"""
 
@@ -1001,7 +1001,7 @@ th {{ background:#f8fafc; font-weight:700; }}
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif; background:#f5f6fa; color:#2d3436; }}
-/* 헤더 — wkhtmltopdf 호환: gradient 대신 단색, opacity 미사용 */
+/* Header — wkhtmltopdf compatible: solid color instead of gradient, no opacity */
 .header {{ background:#0984e3; color:#ffffff; padding:28px 36px; }}
 .header h1 {{ font-size:20px; font-weight:700; margin-bottom:6px; color:#ffffff; }}
 .header .meta {{ font-size:12px; color:#d0e8ff; margin-bottom:16px; }}
@@ -1028,7 +1028,7 @@ body {{ font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-se
                  font-size:12px; color:#555; vertical-align:middle; }}
 .stance-dot {{ display:inline-block; width:9px; height:9px; border-radius:50%;
                margin-right:4px; vertical-align:middle; }}
-/* feed: table 레이아웃으로 flex 대체 */
+/* feed: table layout replacing flex */
 .feed-item {{ display:table; width:100%; margin-bottom:16px; padding-bottom:16px;
               border-bottom:1px solid #f0f0f0; }}
 .feed-item:last-child {{ border-bottom:none; margin-bottom:0; padding-bottom:0; }}
@@ -1053,12 +1053,12 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 </head>
 <body>
 <div class="header">
-  <h1>MiroFish 시뮬레이션 보고서</h1>
+  <h1>MiroFish Simulation Report</h1>
   <div class="meta">주제: {_html_mod.escape(topic)} | {datetime.now().strftime("%Y-%m-%d %H:%M")}</div>
   <div class="stats">
-    <div class="stat"><span class="val">{num_personas}</span><span class="lbl">페르소나</span></div>
-    <div class="stat"><span class="val">{num_rounds}</span><span class="lbl">라운드</span></div>
-    <div class="stat"><span class="val">{total_posts}</span><span class="lbl">총 게시물</span></div>
+    <div class="stat"><span class="val">{num_personas}</span><span class="lbl">Personas</span></div>
+    <div class="stat"><span class="val">{num_rounds}</span><span class="lbl">Rounds</span></div>
+    <div class="stat"><span class="val">{total_posts}</span><span class="lbl">Total Posts</span></div>
     <div class="stat"><span class="val">{stance_counts.get('supportive',0)}</span><span class="lbl">지지</span></div>
     <div class="stat"><span class="val">{stance_counts.get('opposing',0)}</span><span class="lbl">반대</span></div>
     <div class="stat"><span class="val">{stance_counts.get('neutral',0)}</span><span class="lbl">중립</span></div>
@@ -1067,11 +1067,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 <div class="content">
   {brief_section}
   <div class="section">
-    <h2>분석 보고서</h2>
+    <h2>Analysis Report</h2>
     <div class="report-text">{md_to_html(report)}</div>
   </div>
   <div class="section">
-    <h2>시뮬레이션 피드 ({total_posts}개)</h2>
+    <h2>Simulation Feed ({total_posts} posts)</h2>
     <div class="stance-bar">{''.join(stance_bar_parts)}</div>
     {''.join(feed_html_parts)}
   </div>
@@ -1081,11 +1081,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 </html>"""
 
             filepath.write_text(html, encoding="utf-8")
-            self._log(f"[MiroFish] HTML 보고서 저장: {filepath}")
+            self._log(f"[MiroFish] HTML report saved: {filepath}")
             return filepath
 
         def _upload_file_to_slack(filepath: Path, channel: str, thread_ts: str | None, title: str = "") -> bool:
-            """파일을 Slack에 업로드. 성공 여부 반환."""
+            """Upload file to Slack. Returns success status."""
             import requests as _req
             try:
                 content  = filepath.read_bytes()
@@ -1101,16 +1101,16 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 if thread_ts:
                     kw["thread_ts"] = thread_ts
                 web.files_completeUploadExternal(**kw)
-                self._log(f"[MiroFish] HTML 업로드 완료: {filename}")
+                self._log(f"[MiroFish] HTML upload complete: {filename}")
                 return True
             except Exception as e:
-                self._log(f"[MiroFish] HTML 업로드 실패: {e}")
+                self._log(f"[MiroFish] HTML upload failed: {e}")
                 return False
 
         def _format_and_post_miro(result: dict, topic: str, num_personas: int, num_rounds: int,
                                    say, channel: str, thread_ts: str | None, think_ts: str | None,
                                    report_only: bool, label: str = "", pm_brief: str | None = None):
-            """MiroFish 결과를 Slack에 게시 + 볼트 자동 저장."""
+            """Post MiroFish results to Slack + auto-save to vault."""
             def update(msg: str, blocks: list | None = None):
                 if think_ts:
                     try:
@@ -1119,12 +1119,12 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                             kw["blocks"] = blocks
                         web.chat_update(**kw)
                     except Exception as _ue:
-                        self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                        self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
 
             feed   = result.get("feed", [])
             report = result.get("report", "")
 
-            # ── Slack 요약 메시지 (간결) ─────────────────────────────────────
+            # ── Slack summary message (concise) ─────────────────────────────
             prefix = f"*{label}* " if label else ""
             stance_counts: dict[str, int] = {}
             for p in feed:
@@ -1132,11 +1132,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 stance_counts[s] = stance_counts.get(s, 0) + 1
 
             stance_summary = "  ".join(
-                f"{STANCE_KO.get(s, s)} {c}건"
+                f"{STANCE_LABEL.get(s, s)} {c}건"
                 for s, c in sorted(stance_counts.items(), key=lambda x: -x[1])
             ) or "—"
 
-            # 보고서에서 첫 의미있는 단락(최대 400자)만 미리보기로 추출
+            # Extract only the first meaningful paragraph (max 400 chars) from the report as preview
             report_preview = ""
             for line in report.splitlines():
                 stripped = line.strip().lstrip("#").strip()
@@ -1148,7 +1148,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             summary_blocks = [
                 {
                     "type": "header",
-                    "text": {"type": "plain_text", "text": f"🐟  {title_prefix}MiroFish 시뮬레이션 완료", "emoji": True},
+                    "text": {"type": "plain_text", "text": f"🐟  {title_prefix}MiroFish Simulation Complete", "emoji": True},
                 },
                 {
                     "type": "section",
@@ -1157,34 +1157,34 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 {
                     "type": "section",
                     "fields": [
-                        {"type": "mrkdwn", "text": f"*페르소나*\n{num_personas}명"},
-                        {"type": "mrkdwn", "text": f"*라운드*\n{num_rounds}회"},
-                        {"type": "mrkdwn", "text": f"*게시물*\n{len(feed)}개"},
+                        {"type": "mrkdwn", "text": f"*Personas*\n{num_personas}"},
+                        {"type": "mrkdwn", "text": f"*Rounds*\n{num_rounds}"},
+                        {"type": "mrkdwn", "text": f"*Posts*\n{len(feed)}"},
                         {"type": "mrkdwn", "text": f"*반응 분포*\n{stance_summary}"},
                     ],
                 },
                 {
                     "type": "context",
-                    "elements": [{"type": "mrkdwn", "text": "📄 결과 보고서 생성 중..."}],
+                    "elements": [{"type": "mrkdwn", "text": "📄 Generating results report..."}],
                 },
             ]
             slack_summary = f"🐟 MiroFish 완료: {topic} ({len(feed)}개 반응 · {stance_summary})"
             update(slack_summary, blocks=summary_blocks)
 
-            # ── HTML 보고서 생성 + Slack 업로드 (비동기) ────────────────────
+            # ── HTML report generation + Slack upload (async) ────────────────
             def _async_post():
                 try:
-                    # 후속 시뮬레이션 제안
-                    # fallback 보고서(API 키 없음 등)는 오류 맥락을 LLM에 노출하지 않음
+                    # Follow-up simulation suggestions
+                    # Fallback reports (no API key etc.) don't expose error context to LLM
                     _is_fallback = "API 키가 없어" in report or not report.strip()
                     _report_summary = "" if _is_fallback else report[:800]
                     followup_prompt = (
-                        f"다음 MiroFish 유저 반응 시뮬레이션이 완료됐어:\n"
+                        f"The following MiroFish user response simulation is complete:\n"
                         f"주제: {topic}\n"
-                        + (f"보고서 요약: {_report_summary}\n\n" if _report_summary else "\n")
-                        + f"이 결과를 바탕으로 게임 기획자가 더 깊이 탐구할 수 있는 "
-                        f"파생 시뮬레이션 주제 2-3개를 짧게 제안해줘.\n"
-                        f"각 제안은 한 줄로, 실제로 입력할 수 있는 🐟 명령어 형식으로."
+                        + (f"Report summary: {_report_summary}\n\n" if _report_summary else "\n")
+                        + f"Based on these results, briefly suggest 2-3 derivative simulation topics "
+                        f"that a game designer could explore further.\n"
+                        f"Each suggestion should be one line, in a format that can be directly used as a 🐟 command."
                     )
                     followup, _ = ask_via_electron(followup_prompt, tag="chief")
                     if followup:
@@ -1194,18 +1194,18 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                     "type": "section",
                                     "text": {
                                         "type": "mrkdwn",
-                                        "text": f"*💡  후속 시뮬레이션 제안*\n\n{followup.strip()}",
+                                        "text": f"*💡  Follow-up Simulation Suggestions*\n\n{followup.strip()}",
                                     },
                                 },
                             ],
-                            text=f"💡 후속 시뮬레이션 제안\n\n{followup.strip()}",
+                            text=f"💡 Follow-up Simulation Suggestions\n\n{followup.strip()}",
                             thread_ts=thread_ts,
                         )
                 except Exception as _e:
                     self._log(f"[MiroFish] 후속 제안 실패: {_e}")
 
                 try:
-                    # HTML 생성 → PDF 변환 → Slack 업로드 (HTML은 로컬 백업)
+                    # HTML generation → PDF conversion → Slack upload (HTML is local backup)
                     html_path = _generate_mirofish_html(
                         topic, report, feed, num_personas, num_rounds, pm_brief=pm_brief
                     )
@@ -1221,18 +1221,18 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         self._log(f"[MiroFish] PDF 변환 완료: {pdf_path.name}")
                         upload_path = pdf_path
                     except Exception as _pdf_e:
-                        self._log(f"[MiroFish] PDF 변환 실패 ({type(_pdf_e).__name__}: {_pdf_e}) → HTML 업로드")
+                        self._log(f"[MiroFish] PDF conversion failed ({type(_pdf_e).__name__}: {_pdf_e}) → HTML upload")
                         upload_path = html_path
                     _upload_file_to_slack(
                         upload_path, channel, thread_ts,
                         title=f"MiroFish — {topic}"
                     )
-                    # 업로드 완료 후 메시지 업데이트
+                    # Update message after upload complete
                     ext = upload_path.suffix.upper().lstrip(".")
                     done_blocks = [
                         {
                             "type": "header",
-                            "text": {"type": "plain_text", "text": f"🐟  {title_prefix}MiroFish 시뮬레이션 완료", "emoji": True},
+                            "text": {"type": "plain_text", "text": f"🐟  {title_prefix}MiroFish Simulation Complete", "emoji": True},
                         },
                         {
                             "type": "section",
@@ -1241,23 +1241,23 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         {
                             "type": "section",
                             "fields": [
-                                {"type": "mrkdwn", "text": f"*페르소나*\n{num_personas}명"},
-                                {"type": "mrkdwn", "text": f"*라운드*\n{num_rounds}회"},
-                                {"type": "mrkdwn", "text": f"*게시물*\n{len(feed)}개"},
+                                {"type": "mrkdwn", "text": f"*Personas*\n{num_personas}"},
+                                {"type": "mrkdwn", "text": f"*Rounds*\n{num_rounds}"},
+                                {"type": "mrkdwn", "text": f"*Posts*\n{len(feed)}"},
                                 {"type": "mrkdwn", "text": f"*반응 분포*\n{stance_summary}"},
                             ],
                         },
                         {
                             "type": "context",
-                            "elements": [{"type": "mrkdwn", "text": f"📎 보고서 {ext} 파일이 아래에 첨부됐어요."}],
+                            "elements": [{"type": "mrkdwn", "text": f"📎 Report {ext} file is attached below."}],
                         },
                     ]
                     update(
-                        f"🐟 MiroFish 완료: {topic} · {ext} 보고서 첨부",
+                        f"🐟 MiroFish complete: {topic} · {ext} report attached",
                         blocks=done_blocks,
                     )
                 except Exception as _e:
-                    self._log(f"[MiroFish] 보고서 생성 실패: {_e}")
+                    self._log(f"[MiroFish] Report generation failed: {_e}")
 
                 try:
                     # 볼트 저장
@@ -1268,25 +1268,25 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     elif saved:
                         self._log(f"[MiroFish] 볼트 저장 실패: {saved}")
                     else:
-                        self._log("[MiroFish] 볼트 저장 실패 — Electron 미실행 또는 응답 없음")
+                        self._log("[MiroFish] Vault save failed — Electron not running or no response")
                 except Exception as _e:
                     self._log(f"[MiroFish] 볼트 저장 예외: {_e}")
 
             threading.Thread(target=_async_post, daemon=True).start()
 
-            # 시뮬레이션 결과를 스레드 히스토리에 저장 → 후속 "요약/분석해줘" 질문 시 컨텍스트 제공
+            # Save simulation results to thread history → provides context for follow-up summary/analysis questions
             hist_key = f"{channel}:{thread_ts or 'dm'}"
             summary_for_hist = report[:1500] if len(report) > 1500 else report
             with _conv_history_lock:
                 prior = _conv_history.get(hist_key, [])
                 _conv_history[hist_key] = (prior + [
-                    {"role": "user",      "content": f"[MiroFish 시뮬레이션] 주제: {topic}"},
-                    {"role": "assistant", "content": f"[시뮬레이션 완료] 보고서:\n{summary_for_hist}"},
+                    {"role": "user",      "content": f"[MiroFish Simulation] Topic: {topic}"},
+                    {"role": "assistant", "content": f"[Simulation Complete] Report:\n{summary_for_hist}"},
                 ])[-40:]
 
         def _handle_mirofish(query: str, say, channel: str, thread_ts: str | None, image_files: list | None = None):
-            """MiroFish 시뮬레이션 요청 처리."""
-            # 파라미터 파싱
+            """Handle MiroFish simulation requests."""
+            # Parameter parsing
             personas_m = MIRO_PERSONAS_RE.search(query)
             rounds_m   = MIRO_ROUNDS_RE.search(query)
             num_personas = int(personas_m.group(1)) if personas_m else 5
@@ -1294,14 +1294,14 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             num_personas = max(3, min(50, num_personas))
             num_rounds   = max(2, min(10, num_rounds))
 
-            # 보고서 전용 모드 — "시뮬 보고서" / "시뮬레이션 보고서" 키워드
-            report_only = bool(_re.search(r"시뮬레이션?\s*보고서|시뮬\s*보고서", query))
+            # Report-only mode — "시뮬 Report" / "시뮬레이션 Report" keyword — Korean patterns kept as-is
+            report_only = bool(_re.search(r"시뮬레이션?\s*Report|시뮬\s*Report", query))
 
-            # 세그먼트 추출
+            # Segment extraction
             seg_m = MIRO_SEGMENT_RE.search(query)
             segment: str | None = seg_m.group(0).strip() if seg_m else None
 
-            # 프리셋 참조 추출: [프리셋:이름]
+            # Extract preset reference: [프리셋:name] or [preset:name]
             preset_m = MIRO_PRESET_RE.search(query)
             preset_personas: list[dict] | None = None
             preset_label = ""
@@ -1309,20 +1309,20 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 preset_name_raw = preset_m.group(1).strip()
                 settings_data = get_electron_settings() or {}
                 saved_presets = settings_data.get("presets", [])
-                # 이름 퍼지 매칭 (소문자 포함 검색)
+                # Name fuzzy matching (case-insensitive search)
                 matched = next(
                     (p for p in saved_presets if preset_name_raw.lower() in p.get("name", "").lower()),
                     None,
                 )
                 if matched:
                     preset_personas = matched.get("personas", []) or None
-                    preset_label = f" | 프리셋: {matched['name']}"
+                    preset_label = f" | Preset: {matched['name']}"
                     if preset_personas:
                         num_personas = len(preset_personas)
-                    self._log(f"[MiroFish] 프리셋 '{matched['name']}' 적용 ({num_personas}명)")
+                    self._log(f"[MiroFish] Preset '{matched['name']}' applied ({num_personas} personas)")
                 else:
                     preset_list = ", ".join(f"'{p.get('name','')}'" for p in saved_presets[:5])
-                    say(text=f"🐟 프리셋 `{preset_name_raw}`을 찾을 수 없습니다.\n저장된 프리셋: {preset_list or '없음'}",
+                    say(text=f"🐟 Preset `{preset_name_raw}` not found.\nSaved presets: {preset_list or 'none'}",
                         thread_ts=thread_ts)
                     return
 
@@ -1330,13 +1330,13 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             vs_m = _re.search(r"(.+?)\s+vs\.?\s+(.+)", query, _re.IGNORECASE)
             is_vs_mode = bool(vs_m)
 
-            # 주제 추출: 트리거 키워드 + 수치 옵션만 제거 (segment는 topic에 유지 — 제거 시 topic이 불완전해짐)
+            # Topic extraction: remove only trigger keywords + numeric options (segment kept in topic — removing it makes topic incomplete)
             topic = MIROFISH_RE.sub("", query)
             topic = MIRO_PERSONAS_RE.sub("", topic)
             topic = MIRO_ROUNDS_RE.sub("", topic)
             if preset_m:
                 topic = MIRO_PRESET_RE.sub("", topic)
-            topic = _re.sub(r"\s*보고서\s*", " ", topic)
+            topic = _re.sub(r"\s*Report\s*", " ", topic)
             topic = _re.sub(r"\s*새로\s*시뮬레이션\s*", " ", topic)
             topic = topic.strip(",:. ~\t\n").strip()
             # trailing 요청 표현 제거: 해줘/해주세요/해봐/줘/주세요/부탁해/돌려줘/실행해줘 등
@@ -1364,7 +1364,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             )
             think_ts = (thinking or {}).get("ts")
 
-            self._log(f"[MiroFish] 주제='{topic}' 페르소나={num_personas} 라운드={num_rounds} 세그먼트={segment!r} 프리셋={bool(preset_personas)} vs={is_vs_mode}")
+            self._log(f"[MiroFish] topic='{topic}' personas={num_personas} rounds={num_rounds} segment={segment!r} preset={bool(preset_personas)} vs={is_vs_mode}")
 
             # 볼트 RAG 검색으로 배경 컨텍스트 수집
             context: str | None = None
@@ -1378,7 +1378,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         ctx_parts.append(f"### {title}\n{body}")
                 if ctx_parts:
                     context = "\n\n".join(ctx_parts)
-                    self._log(f"[MiroFish] RAG 컨텍스트 {len(ctx_parts)}개 문서 주입")
+                    self._log(f"[MiroFish] RAG context injected: {len(ctx_parts)} documents")
 
             # 이미지 처리: imageDirectPass 설정에 따라 직접 전달 vs 텍스트 변환
             sim_images: list[dict] | None = None
@@ -1388,13 +1388,13 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         web.chat_update(channel=channel, ts=think_ts,
                                         text=f"🐟  *MiroFish*  {topic}\n_🖼️ 이미지 처리 중..._")
                     except Exception as _ue:
-                        self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                        self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
                 images_payload = _download_images(image_files)
                 if images_payload:
                     image_direct = get_electron_settings() or {}
                     if image_direct.get("imageDirectPass", True):
                         sim_images = images_payload
-                        self._log(f"[MiroFish] 이미지 {len(sim_images)}개 직접 전달 모드")
+                        self._log(f"[MiroFish] Direct image pass-through mode: {len(sim_images)} images")
                     else:
                         desc_answer, _ = ask_via_electron(
                             "첨부된 이미지를 시뮬레이션 참가자들이 참고할 수 있도록 "
@@ -1405,7 +1405,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         if desc_answer:
                             img_ctx = f"### 첨부 이미지 설명\n{desc_answer.strip()}"
                             context = f"{img_ctx}\n\n{context}" if context else img_ctx
-                            self._log(f"[MiroFish] 이미지 텍스트 변환 컨텍스트 주입 ({len(desc_answer)}자)")
+                            self._log(f"[MiroFish] Image-to-text context injected ({len(desc_answer)} chars)")
 
             # ── PM AI 브리프 생성 ──────────────────────────────────────────
             # 원본 요청 + RAG 문서를 PM AI가 분석 → MiroFish용 구조화된 브리프 생성
@@ -1415,7 +1415,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     web.chat_update(channel=channel, ts=think_ts,
                                     text=f"🐟  *MiroFish*  {topic}\n_🧠 브리프 작성 중..._")
                 except Exception as _ue:
-                    self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                    self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
 
             brief_prompt_parts = [
                 "MiroFish 시뮬레이션(가상 유저 반응) 브리프를 작성해줘. 600자 이내, 서론 없이.\n\n",
@@ -1439,16 +1439,16 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 
             def _run_brief():
                 if not _brief_api_key:
-                    self._log("[MiroFish] API 키 없음 → PM 브리프 생성 건너뜀")
+                    self._log("[MiroFish] No API key → skipping PM brief generation")
                     _brief_done.set()
                     return
                 try:
                     _brief_cli = ClaudeClient(_brief_api_key, _BRIEF_MODEL)
                     _brief_system = "유저 리서치 전문가. MiroFish 시뮬레이션용 구조화 브리프 작성."
                     _brief_result[0] = _brief_cli.complete(_brief_system, "".join(brief_prompt_parts), max_tokens=700)
-                    self._log(f"[MiroFish] PM 브리프 생성 완료: {len(_brief_result[0] or '')}자")
+                    self._log(f"[MiroFish] PM brief generated: {len(_brief_result[0] or '')} chars")
                 except Exception as _e:
-                    self._log(f"[MiroFish] PM 브리프 생성 예외: {_e}")
+                    self._log(f"[MiroFish] PM brief generation exception: {_e}")
                 finally:
                     _brief_done.set()
 
@@ -1462,18 +1462,18 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         web.chat_update(channel=channel, ts=think_ts,
                                         text=f"🐟  *MiroFish*  {topic}\n_🧠 브리프 작성 중... ⏱ {_brief_elapsed}s_")
                     except Exception as _ue:
-                        self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                        self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
                 if _brief_elapsed >= _BRIEF_TIMEOUT:
-                    self._log("[MiroFish] PM 브리프 타임아웃 → raw context 유지")
+                    self._log("[MiroFish] PM brief timeout → keeping raw context")
                     break
 
             brief_answer = _brief_result[0]
             if brief_answer and brief_answer.strip():
                 # 원본 topic이 context 내용으로 대체되지 않도록 명시적 분리 prefix 추가
                 context = f"[원본 시뮬레이션 주제: {topic}]\n\n" + brief_answer.strip()[:1150]
-                self._log(f"[MiroFish] PM 브리프 → context 교체 ({len(context)}자)")
+                self._log(f"[MiroFish] PM brief → context replaced ({len(context)} chars)")
             else:
-                self._log("[MiroFish] PM 브리프 없음 → raw RAG context 유지")
+                self._log("[MiroFish] No PM brief → keeping raw RAG context")
 
             # 브리프 완료 → 시뮬레이션 전환 알림 (이후 20초 동안 상태 업데이트 없는 공백 방지)
             if think_ts:
@@ -1481,7 +1481,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     web.chat_update(channel=channel, ts=think_ts,
                                     text=f"🐟  *MiroFish*  {topic}\n_⚙️ 페르소나 생성 중..._")
                 except Exception as _ue:
-                    self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                    self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
 
             # ── A vs B 비교 모드 ───────────────────────────────────────────
             if is_vs_mode and vs_m:
@@ -1499,7 +1499,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         web.chat_update(channel=channel, ts=think_ts,
                                         text=f"🐟  *A vs B 비교 시뮬레이션*\n🅰️ {topic_a}\n🅱️ {topic_b}\n_⏳ 두 시나리오 동시 실행 중..._")
                     except Exception as _ue:
-                        self._log(f"[MiroFish] chat_update 실패 (무시): {_ue}")
+                        self._log(f"[MiroFish] chat_update failed (ignored): {_ue}")
 
                 result_a: list[dict | None] = [None]
                 result_b: list[dict | None] = [None]
@@ -1608,18 +1608,18 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             # ── 단일 시뮬레이션 ───────────────────────────────────────────
             result = _run_single_miro(topic, num_personas, num_rounds, context, sim_images, segment, channel, think_ts, preset_personas=preset_personas)
 
-            # 시뮬레이션 데이터 수신 후 → 보고서 작성 전 중간 상태 표시
+            # 시뮬레이션 데이터 수신 후 → Report 작성 전 중간 상태 표시
             if result and think_ts:
                 try:
                     web.chat_update(
                         channel=channel, ts=think_ts,
-                        text=f"🐟  *MiroFish*  {topic}  —  {len(result.get('feed', []))}개 반응 수집\n_📝 보고서 작성 중..._",
+                        text=f"🐟  *MiroFish*  {topic}  —  {len(result.get('feed', []))}개 반응 수집\n_📝 Report 작성 중..._",
                     )
                 except Exception:
                     pass
 
             if not result:
-                self._log("[MiroFish] 시뮬레이션 결과 없음 → 실패 알림")
+                self._log("[MiroFish] No simulation results → failure notification")
                 fail_msg = (
                     f"🐟 *MiroFish 시뮬레이션 실패*\n주제: _{topic}_\n\n"
                     f"*가능한 원인:*\n"
@@ -1649,11 +1649,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             image_files = [f for f in (files or []) if f.get("mimetype", "").startswith("image/")]
 
             # 검색용 정제 쿼리: 메타 지시 표현 제거 → BM25/TF-IDF 오염 방지
-            # ("보고서 써줘", "분석해줘", "방향 제안해줘" 같은 요청 동사구 제거)
-            # 최종 LLM 생성에는 원본 query 유지 (보고서·분석 등 지시 의미가 필요)
+            # ("Report 써줘", "분석해줘", "방향 제안해줘" 같은 요청 동사구 제거)
+            # 최종 LLM 생성에는 원본 query 유지 (Report·분석 등 지시 의미가 필요)
             search_query = _clean_search_query(query)
             if search_query != query:
-                self._log(f"[쿼리정제] '{query[:40]}' → '{search_query[:40]}'")
+                self._log(f"[QueryClean] '{query[:40]}' → '{search_query[:40]}'")
 
             if not query and not image_files:
                 say(text="무엇을 도와드릴까요?", thread_ts=thread_ts)
@@ -1711,7 +1711,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                     "메시지에 `시뮬레이션` 또는 `시뮬`이 포함되면 자동 실행돼요.\n\n"
                                     "`신규 캐릭터 출시 시뮬레이션`  — 기본 (5명, 3라운드)\n"
                                     "`가격 인상 발표 시뮬레이션 10명 5라운드`  — 인원/라운드 지정\n"
-                                    "`PvP 업데이트 시뮬 보고서`  — 피드 없이 보고서만\n"
+                                    "`PvP 업데이트 시뮬 Report`  — 피드 없이 Report만\n"
                                     "`신규 던전 코어 게이머 시뮬레이션`  — 타겟 세그먼트 지정\n"
                                     "`A vs B 시뮬레이션`  — 두 시나리오 동시 비교\n"
                                     "`... 새로 시뮬레이션`  — 30분 캐시 무시하고 새로 실행"
@@ -1737,7 +1737,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         },
                         {
                             "type": "context",
-                            "elements": [{"type": "mrkdwn", "text": "🔖 볼트 문서에 `#시뮬레이션필요` 태그 → 자동 알림   •   ⏰ 스케줄 자동 실행: Settings > MiroFish"}],
+                            "elements": [{"type": "mrkdwn", "text": "🔖 볼트 문서에 `#시뮬레이션필요` 태그 → 자동 알림   •   ⏰ Schedule 자동 실행: Settings > MiroFish"}],
                         },
                     ],
                     text="🗺️ Strata Sync Bot 사용법",
@@ -1755,7 +1755,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             name    = persona.get("name", tag)
 
             # thinking 메시지 1개만 생성 — vision/RAG 모두 같은 ts로 업데이트
-            status = "✦ 이미지 분석 중..." if image_files else "✦ 깊게 생각하는 중..."
+            status = "✦ Analyzing images..." if image_files else "✦ Thinking deeply..."
             thinking = say(text=f"{status}", thread_ts=thread_ts)
             think_ts = (thinking or {}).get("ts")
             progress = ProgressUpdater(
@@ -1766,12 +1766,12 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             # 이미지가 있으면: 다운로드 → Electron에 직접 전달 (LLM이 이미지 + RAG 문서 함께 분석)
             images_payload: list[dict] = []
             if image_files:
-                self._log(f"[Vision] {name}: 이미지 {len(image_files)}개 다운로드 중...")
+                self._log(f"[Vision] {name}: Downloading {len(image_files)} images...")
                 images_payload = _download_images(image_files)
                 if images_payload:
                     self._log(f"[Vision] {len(images_payload)}개 Electron으로 전달")
                 else:
-                    self._log("[Vision] 이미지 다운로드 0건 → 텍스트만으로 RAG 폴백")
+                    self._log("[Vision] 0 images downloaded → falling back to text-only RAG")
 
             self._log(f"[Slack] {name}: {query[:60]}")
 
@@ -1779,69 +1779,69 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             vault_image_paths: list[str] = []
             is_img_req = any(w in query for w in _IMAGE_WORDS)
             if is_img_req:
-                # 이미지/동작 단어 제거 → 주제어(캐릭터명 등)만 남김
+                # Remove image/action words → keep only topic words (character names, etc.)
                 img_query = query
                 for w in _IMAGE_WORDS + _ACTION_WORDS:
                     img_query = img_query.replace(w, " ")
                 img_query = " ".join(img_query.split()).strip("~,. !?") or query
                 vault_image_paths = get_images_via_electron(img_query)
-                self._log(f"[Image] 명시적 검색 '{img_query[:40]}': {len(vault_image_paths)}개")
+                self._log(f"[Image] Explicit search '{img_query[:40]}': {len(vault_image_paths)} results")
 
-            # 스레드별 히스토리 조회 (DM은 channel을 key로 사용)
+            # Retrieve per-thread history (DMs use channel as key)
             hist_key = f"{channel}:{thread_ts or 'dm'}"
             with _conv_history_lock:
                 history = list(_conv_history.get(hist_key, []))
             if history:
-                self._log(f"[Slack] 히스토리 {len(history)//2}턴 복원")
+                self._log(f"[Slack] History restored: {len(history)//2} turns")
 
-            claude = None  # 폴백에서 덮어씀, 사용자 기억 갱신에 사용
-            # 1순위: Electron /ask — Strata Sync의 BFS RAG + LLM 파이프라인 그대로 사용
+            claude = None  # Overwritten in fallback, used for user memory update
+            # Priority 1: Electron /ask — uses Strata Sync's BFS RAG + LLM pipeline directly
             if progress: progress.start("electron")
 
             # Electron HTTP 준비 확인 (3초 이내 /settings 응답)
-            # TCP만 열려있고 HTTP 미응답 = 재시동 중 → 즉시 폴백 (65초 대기 방지)
+            # TCP open but no HTTP response = restarting → immediate fallback (prevents 65s wait)
             if not is_electron_alive():
                 if progress:
-                    progress.set_message("🔴 샌드박스 맵 앱이 꺼져 있거나 시작 중이에요. Python RAG로 처리 중...")
-                self._log("[RAG] Electron HTTP 미응답 (오프라인/재시동) → 폴백")
+                    progress.set_message("🔴 Sandbox Map app is off or starting up. Processing with Python RAG...")
+                self._log("[RAG] Electron HTTP not responding (offline/restarting) → fallback")
                 answer, auto_image_paths = None, []
             else:
                 answer, auto_image_paths = ask_via_electron(query, tag=tag, history=history, images=images_payload or None)
                 if answer is None and progress:
-                    # 앱은 켜져 있었지만 응답 없음 = 빌드 중 or 타임아웃
+                    # App was on but no response = building or timeout
                     progress.set_message("⏱️ 앱 응답 시간 초과. Python RAG로 처리 중...")
 
             if progress: progress.done("electron")
             if answer:
                 self._log("[RAG] Electron /ask 성공 (BFS+LLM)")
                 if auto_image_paths:
-                    self._log(f"[Image] 자동 이미지 {len(auto_image_paths)}개")
+                    self._log(f"[Image] Auto images: {len(auto_image_paths)}")
                 final = answer
             else:
                 auto_image_paths = []
-                # 폴백: Python 자체 RAG + 서브 에이전트 10개 + Claude
-                self._log("[RAG] Electron 미실행 → 서브 에이전트 RAG")
-                # 폴백 경로는 세분화된 스텝으로 표시
+                # Fallback: Python native RAG + 10 sub-agents + Claude
+                self._log("[RAG] Electron not running → sub-agent RAG")
+                # Fallback path uses granular step display
                 if progress:
                     progress._remaining = ["search", "analyze", "webcheck", "answer"]
-                # Claude 클라이언트 초기화 (쿼리 리라이팅·멀티쿼리·분석에 공통 사용)
+                # Initialize Claude client (shared for query rewriting, multi-query, analysis)
                 model = get_model_for_tag(tag)
                 live_key = get_anthropic_key(self.cfg) or api_key
                 claude = ClaudeClient(live_key, model) if live_key else None
                 self._log(f"[모델] {model}")
 
-                # ── 쿼리 리라이팅 (검색 최적화) ──────────────────────────
+                # ── Query rewriting (search optimization) ────────────────
                 if claude:
                     _rewrite_sys = "질문→검색 키워드 변환. 동사·어미·조사 제거, 핵심 명사 중심, 20자 이내. 쿼리만 출력."
                     try:
                         _rewritten = claude.complete(_rewrite_sys, search_query, max_tokens=40).strip()
                         if _rewritten and 3 < len(_rewritten) < 80:
-                            self._log(f"[쿼리리라이팅] '{search_query[:40]}' → '{_rewritten[:40]}'")
+                            self._log(f"[QueryRewrite] '{search_query[:40]}' → '{_rewritten[:40]}'")
                             search_query = _rewritten
                     except Exception as _e:
-                        self._log(f"[쿼리리라이팅] 실패 (무시): {_e}")
+                        self._log(f"[QueryRewrite] 실패 (무시): {_e}")
 
-                # 서브 에이전트가 최대 10개 문서를 분석하므로 top_n*2 검색
+                # Sub-agents analyze up to 10 docs, so search top_n*2
                 fetch_n = max(top_n * 2, 10)
                 if progress: progress.start("search")
                 results = search_via_electron(search_query, top_n=fetch_n)
@@ -1852,7 +1852,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     self._log(f"[RAG] Electron TF-IDF ({len(results)}건)")
 
                 # 쿼리에 "최신/최근/올해 연도" 가 있으면 날짜 기준 부스팅
-                # BM25는 날짜를 모르므로, 최신 문서가 내용이 짧아도 상위에 오도록 보정
+                # BM25 doesn't know dates, so boost recent docs even if content is short
                 _cur_year = str(datetime.now().year)
                 _prev_year = str(datetime.now().year - 1)
                 if results and any(w in query for w in ["최신", "최근", _cur_year]):
@@ -1860,11 +1860,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         d = r.get("date", "")
                         r["_date_boost"] = 2 if _cur_year in d else (1 if _prev_year in d else 0)
                     results.sort(key=lambda r: (-r["_date_boost"], -r.get("score", 0)))
-                    self._log(f"[RAG] 최신 요청 → 날짜 부스팅 적용 (top: {results[0].get('date','')})")
+                    self._log(f"[RAG] Latest request → date boosting applied (top: {results[0].get('date','')})")
 
-                # ── 멀티-쿼리 분해 (복합 질문 → 서브쿼리 병합 + 수렴 조기 종료) ──
+                # ── Multi-query decomposition (complex question → sub-query merge + early convergence stop) ──
                 if claude and results and len(query) > 25:
-                    _decomp_sys = "질문을 2개의 독립 검색 쿼리로 분해, 줄바꿈 구분, 10자 이내. 단순 질문이면 빈 응답."
+                    _decomp_sys = "Decompose the question into 2 independent search queries, newline separated, max 10 chars each. Return empty for simple questions."
                     try:
                         _sub_raw = claude.complete(_decomp_sys, query, max_tokens=60).strip()
                         _sub_queries = [
@@ -1872,7 +1872,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                             if q.strip() and 2 < len(q.strip()) < 60
                         ]
                         if len(_sub_queries) >= 2:
-                            self._log(f"[멀티쿼리] 분해: {_sub_queries}")
+                            self._log(f"[MultiQuery] Decomposed: {_sub_queries}")
                             _seen_stems = {r.get("stem") for r in results}
                             _zero_gain_rounds = 0  # 수렴 조기 종료 카운터
                             for _sq in _sub_queries:
@@ -1882,23 +1882,23 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                     if _r.get("stem") not in _seen_stems:
                                         results.append(_r)
                                         _seen_stems.add(_r.get("stem"))
-                                # 수렴 체크: 새 문서 없으면 카운터 증가 → 2회 연속이면 조기 종료
+                                # Convergence check: increment counter if no new docs → early stop after 2 consecutive
                                 if len(_seen_stems) == _prev_count:
                                     _zero_gain_rounds += 1
                                     if _zero_gain_rounds >= 2:
-                                        self._log("[멀티쿼리] 수렴 감지 → 조기 종료")
+                                        self._log("[MultiQuery] Convergence detected → early stop")
                                         break
                                 else:
                                     _zero_gain_rounds = 0
-                            self._log(f"[멀티쿼리] 병합 후 {len(results)}건")
+                            self._log(f"[MultiQuery] 병합 후 {len(results)}건")
                     except Exception as _e:
-                        self._log(f"[멀티쿼리] 실패 (무시): {_e}")
+                        self._log(f"[MultiQuery] 실패 (무시): {_e}")
 
-                # ── 핫스코어 재랭킹 (OpenViking memory_lifecycle 기반) ──────
-                # 자주/최근 참조된 문서에 보너스를 부여해 재정렬
+                # ── Hot score reranking (based on OpenViking memory_lifecycle) ──
+                # Give bonus to frequently/recently referenced docs for reranking
                 if results:
                     results = apply_hotness_rerank(results)
-                    self._log(f"[핫스코어] 재랭킹 완료 (top: {results[0].get('title','')[:30]})")
+                    self._log(f"[HotScore] Reranking complete (top: {results[0].get('title','')[:30]})")
 
                 if progress: progress.done("search")
 
@@ -1907,7 +1907,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 _self_review_enabled = _cost_settings.get("selfReview", True)
                 _n_agents = int(_cost_settings.get("nAgents", 6))
 
-                # ── 서브 에이전트 문서 분석 ──────────────────────────────
+                # ── Sub-agent document analysis ──────────────────────────
                 if progress: progress.start("analyze")
                 if claude and results:
                     rag_context = build_multi_agent_context(
@@ -1918,11 +1918,11 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                 if progress: progress.done("analyze")
 
                 # ── 웹 검색: AI가 스스로 필요 판단 ─────────────────────
-                # Claude가 웹 검색 필요 여부를 먼저 판단 (vault 결과 부족하거나 최신 정보 필요 시)
+                # Claude decides whether web search is needed first (when vault results insufficient or latest info needed)
                 web_ctx = ""
                 if progress: progress.start("webcheck")
                 if claude:
-                    decision_sys = '볼트 문서로 충분히 답할 수 있으면 NO, 외부 최신 정보가 필요하면 YES. 형식: "NO" 또는 "YES: <검색어>"'
+                    decision_sys = 'If vault documents can sufficiently answer, NO. If external latest info is needed, YES. Format: "NO" or "YES: <search query>"'
                     decision_msg = (
                         f"질문: {search_query}\n\n"
                         f"볼트 자료 (앞부분):\n{rag_context[:600] if rag_context else '(없음)'}\n\n"
@@ -1937,19 +1937,19 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         if decision.upper().startswith("YES"):
                             colon_idx = decision.find(":")
                             search_q = decision[colon_idx+1:].strip() if colon_idx >= 0 else query
-                            self._log(f"[웹검색] 메인 에이전트 결정: \"{search_q}\" 검색 중...")
+                            self._log(f"[WebSearch] Main agent decision: searching \"{search_q}\"...")
                             if progress: progress.done("webcheck"); progress.start("websearch")
                             web_results = search_web(search_q or query, max_results=5)
                             if web_results:
                                 web_ctx = build_web_context(web_results)
-                                self._log(f"[웹검색] {len(web_results)}건 확보")
+                                self._log(f"[WebSearch] {len(web_results)}건 확보")
                             else:
-                                self._log("[웹검색] 결과 없음")
+                                self._log("[WebSearch] 결과 없음")
                         else:
-                            self._log("[웹검색] 메인 에이전트 판단: 볼트 정보 충분 → 스킵")
+                            self._log("[WebSearch] Main agent judgment: vault info sufficient → skip")
                             if progress: progress.done("webcheck")
                     except Exception as e:
-                        self._log(f"[웹검색 판단] 오류: {e} → 스킵")
+                        self._log(f"[WebSearch 판단] 오류: {e} → 스킵")
                         if progress: progress.done("webcheck")
 
                 # ── 최종 답변 생성 ────────────────────────────────────────
@@ -1962,47 +1962,47 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     combined = f"오늘 날짜: {today_str}\n\n" + persona["system"]
                     # 사용자 기억 주입
                     if user_id and _user_memory.get(user_id):
-                        combined += f"\n\n---\n## 📌 이 사용자와의 이전 대화 기억\n{_user_memory[user_id]}\n---"
+                        combined += f"\n\n---\n## 📌 Previous Conversation Memory with This User\n{_user_memory[user_id]}\n---"
                     if rag_context:
                         combined += f"\n\n{rag_context}"
                     if web_ctx:
                         combined += f"\n\n{web_ctx}"
-                    # 페르소나별 분석 프레임
+                    # Per-persona analysis frame
                     _PERSONA_ANALYSIS_FRAMES = {
                         "chief": (
-                            "[PM 분석 관점] ① 프로젝트 방향·목표 정합성 "
-                            "② 리소스·일정·우선순위 실현 가능성 ③ 주요 리스크와 완화 방안"
+                            "[PM Analysis Perspective] 1. Project direction/goal alignment "
+                            "2. Resource/schedule/priority feasibility 3. Key risks and mitigation"
                         ),
                         "art": (
-                            "[아트 분석 관점] ① 스타일·비주얼 일관성·톤앤매너 영향 "
-                            "② 플레이어 시각 메시지와 감성 ③ 기술 구현 가능성과 퀄리티 균형"
+                            "[Art Analysis Perspective] 1. Style/visual consistency/tone impact "
+                            "2. Player visual messaging and emotion 3. Technical feasibility vs quality balance"
                         ),
                         "spec": (
-                            "[기획 분석 관점] ① 밸런스·플레이어 경험·재미 요소 영향 "
-                            "② 기존 시스템 연계성·의존성 ③ 유저 직관성과 납득 가능성"
+                            "[Design Analysis Perspective] 1. Balance/player experience/fun factor impact "
+                            "2. Existing system integration/dependencies 3. User intuitiveness and plausibility"
                         ),
                         "tech": (
                             "[기술 분석 관점] ① 기술 부채·성능·확장성 영향 "
-                            "② 구현 복잡도와 테스트 가능성 ③ 기존 코드베이스 호환성"
+                            "2. Implementation complexity and testability 3. Existing codebase compatibility"
                         ),
                     }
                     if tag in _PERSONA_ANALYSIS_FRAMES:
                         combined += f"\n\n{_PERSONA_ANALYSIS_FRAMES[tag]}"
                     combined += (
                         "\n\n[답변 지침]\n"
-                        "• 사고 순서: 핵심 의도 파악 → 문서 근거 확인 → 인사이트 도출 → 불확실 내용은 명시적 구분\n"
-                        "• 문서 간 상충 시: 명시적으로 지적하고 최신 확인 권고\n"
-                        "• 말투: 항상 전문적인 존댓말(~합니다/~습니다 체)\n"
-                        "• 사실 준수: 볼트 문서·웹 결과·사용자 발화 기반만. 미확인 내용은 '검색된 문서에서 확인되지 않습니다'로 명시. '볼트 문서' 또는 '검색된 문서'로 표현."
+                        "• Thinking order: Identify core intent → Verify document evidence → Derive insights → Explicitly mark uncertain content\n"
+                        "• When documents conflict: Explicitly point out and recommend checking latest version\n"
+                        "• Tone: Always professional and polite\n"
+                        "• Factual compliance: Based only on vault documents, web results, and user statements. Explicitly state 'Not confirmed in searched documents' for unverified content. Refer to sources as 'vault documents' or 'searched documents'."
                     )
                     try:
                         answer = claude.complete(combined, query, max_tokens=2000, cache_system=True)
-                        # ── 2-pass 자기 검토 (selfReview 설정으로 ON/OFF) ──
+                        # ── 2-pass self-review (ON/OFF via selfReview setting) ──
                         if _self_review_enabled:
                             _review_sys = (
-                                "[답변]이 [질문]을 충분히 다뤘는지 검토하세요.\n"
-                                "빠진 핵심 관점이 있으면 [보완]에 추가. 충분하면 [최종답변]만 출력.\n"
-                                "형식: [최종답변]\\n(내용)\\n\\n[보완]\\n(내용, 없으면 생략)"
+                                "Review whether [Answer] sufficiently covers [Question].\n"
+                                "If key perspectives are missing, add to [Supplement]. If sufficient, output only [FinalAnswer].\n"
+                                "Format: [FinalAnswer]\\n(content)\\n\\n[Supplement]\\n(content, omit if none)"
                             )
                             _reviewed = claude.complete(
                                 _review_sys,
@@ -2048,7 +2048,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                     )
 
                 if progress: progress.done("answer")
-                # 참조된 문서 접근 기록 → 핫스코어 학습
+                # 참조된 문서 접근 기록 → HotScore 학습
                 if results and not answer.startswith("❌"):
                     record_doc_access([r.get("stem", "") for r in results[:5]])
                 sources = ""
@@ -2093,13 +2093,13 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
             if all_image_paths:
                 _upload_images_to_slack(all_image_paths, channel, thread_ts)
 
-            # ── 보고서 인텐트 → PDF 비동기 생성 + Slack 업로드 ─────────────────
+            # ── Report 인텐트 → PDF 비동기 생성 + Slack 업로드 ─────────────────
             if REPORT_INTENT_RE.search(query) and answer and not answer.startswith("❌"):
                 import threading as _threading
                 def _async_report_pdf():
                     try:
                         title_m = _re.search(r'["\u300c\u300e\u201c](.+?)["\u300d\u300f\u201d]', query)
-                        report_title = title_m.group(1) if title_m else (query[:40].strip() or "보고서")
+                        report_title = title_m.group(1) if title_m else (query[:40].strip() or "Report")
                         html_path = _generate_report_html(report_title, answer)
                         try:
                             import pdfkit as _pdfkit
@@ -2110,14 +2110,14 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                 configuration=_pdfkit.configuration(wkhtmltopdf=_WKHTMLTOPDF),
                                 options={"encoding": "UTF-8", "quiet": ""},
                             )
-                            self._log(f"[보고서] PDF 변환 완료: {pdf_path.name}")
+                            self._log(f"[Report] PDF 변환 완료: {pdf_path.name}")
                             upload_path = pdf_path
                         except Exception as _pdf_e:
-                            self._log(f"[보고서] PDF 변환 실패 ({type(_pdf_e).__name__}: {_pdf_e}) → HTML 업로드")
+                            self._log(f"[Report] PDF 변환 실패 ({type(_pdf_e).__name__}: {_pdf_e}) → HTML 업로드")
                             upload_path = html_path
                         _upload_file_to_slack(upload_path, channel, thread_ts, title=f"📄 {report_title}")
                     except Exception as _e:
-                        self._log(f"[보고서] PDF 생성 실패: {_e}")
+                        self._log(f"[Report] PDF 생성 실패: {_e}")
                 _threading.Thread(target=_async_report_pdf, daemon=True).start()
 
         @app.event("app_home_opened")
@@ -2470,7 +2470,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 
         self._handler = SocketModeHandler(app, app_token)
 
-        # ── 스케줄 체크 스레드 ───────────────────────────────────────────────
+        # ── Schedule 체크 스레드 ───────────────────────────────────────────────
         _sched_fired: set[str] = set()  # "YYYY-MM-DD HH:MM" 중복 실행 방지
 
         def _schedule_checker():
@@ -2506,13 +2506,13 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                         sched_topic = sched.get("topic", "").strip()
                         sched_np    = max(3, min(50, int(sched.get("numPersonas", 5))))
                         sched_nr    = max(2, min(10, int(sched.get("numRounds", 3))))
-                        self._log(f"[스케줄] 자동 실행: '{sched_topic}' {sched_np}명 {sched_nr}라운드")
+                        self._log(f"[Schedule] 자동 실행: '{sched_topic}' {sched_np}명 {sched_nr}라운드")
 
                         def _run_sched(t=sched_topic, np=sched_np, nr=sched_nr):
                             try:
                                 thinking = web.chat_postMessage(
                                     channel=notify_channel,
-                                    text=f"🐟 *[자동 스케줄] MiroFish 시뮬레이션 시작*\n주제: _{t}_\n페르소나: {np}명 | 라운드: {nr}회\n\n_⏳ 실행 중..._",
+                                    text=f"🐟 *[자동 Schedule] MiroFish 시뮬레이션 시작*\n주제: _{t}_\n페르소나: {np}명 | 라운드: {nr}회\n\n_⏳ 실행 중..._",
                                 )
                                 think_ts = (thinking or {}).get("ts")
                                 context_s: str | None = None
@@ -2533,16 +2533,16 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                     if think_ts:
                                         try:
                                             web.chat_update(channel=notify_channel, ts=think_ts,
-                                                            text=f"🐟 [자동 스케줄] 시뮬레이션 실패: _{t}_")
+                                                            text=f"🐟 [자동 Schedule] 시뮬레이션 실패: _{t}_")
                                         except Exception as _ue:
-                                            self._log(f"[스케줄] chat_update 실패 (무시): {_ue}")
+                                            self._log(f"[Schedule] chat_update failed (ignored): {_ue}")
                             except Exception as e:
-                                self._log(f"[스케줄] 실행 오류: {e}")
+                                self._log(f"[Schedule] 실행 오류: {e}")
 
                         threading.Thread(target=_run_sched, daemon=True).start()
 
                 except Exception as e:
-                    self._log(f"[스케줄] 체크 오류: {e}")
+                    self._log(f"[Schedule] 체크 오류: {e}")
                 time.sleep(30)
 
         # ── 볼트 #시뮬레이션필요 태그 감지 스레드 ───────────────────────────
@@ -2576,9 +2576,9 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
                                 f"💡 `🐟 <주제>` 로 시뮬레이션을 시작하세요."
                             ),
                         )
-                        self._log(f"[태그스캔] #시뮬레이션필요 {len(found)}건 감지")
+                        self._log(f"[TagScan] #시뮬레이션필요 {len(found)}건 감지")
                 except Exception as e:
-                    self._log(f"[태그스캔] 오류: {e}")
+                    self._log(f"[TagScan] 오류: {e}")
                 time.sleep(1200)  # 20분 주기
 
         def _notify_disconnect():
@@ -2605,7 +2605,7 @@ footer {{ text-align:center; color:#bbb; font-size:11px; padding:20px; }}
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
-        self._log("🟢 Slack 봇 시작 — 모델: Strata Sync 페르소나 설정 따름")
+        self._log("🟢 Slack bot started — model: follows Strata Sync persona settings")
         return True
 
     def stop(self):
@@ -2793,7 +2793,7 @@ class App(tk.Tk):
         ttk.Label(slack_cfg, text="RAG top-N:").grid(row=2, column=0, sticky="w", padx=6, pady=3)
         ttk.Spinbox(slack_cfg, textvariable=self.var_slack_top_n,
                     from_=1, to=20, width=5).grid(row=2, column=1, sticky="w", padx=4)
-        ttk.Label(slack_cfg, text="알림 채널 (스케줄·태그):").grid(row=3, column=0, sticky="w", padx=6, pady=3)
+        ttk.Label(slack_cfg, text="알림 채널 (Schedule·태그):").grid(row=3, column=0, sticky="w", padx=6, pady=3)
         ttk.Entry(slack_cfg, textvariable=self.var_slack_notify_ch, width=22).grid(
             row=3, column=1, sticky="ew", padx=4)
         ttk.Label(slack_cfg, text="예: #general 또는 C0123ABCD",
@@ -2905,7 +2905,7 @@ class App(tk.Tk):
         import copy
         new_cfg = copy.deepcopy(self.cfg)
         dest.write_text(json.dumps(new_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._log(f"💾 새 인스턴스 config 생성: {name}")
+        self._log(f"💾 New instance config created: {name}")
         self._mv_refresh()
 
     def _mv_open_config(self):
@@ -2944,7 +2944,7 @@ class App(tk.Tk):
         self.cfg["slack_notify_channel"] = self.var_slack_notify_ch.get().strip()
         self.cfg["wkhtmltopdf_path"]     = self.var_wkhtmltopdf_path.get().strip()
         save_config(self.cfg)
-        self._log("💾 설정 저장됨")
+        self._log("💾 Settings saved")
 
     def _browse_vault(self):
         folder = filedialog.askdirectory(title="볼트 폴더 선택")
@@ -3012,7 +3012,7 @@ class App(tk.Tk):
             self._next_run_time = None
             self.btn_timer.config(text="⏱ 타이머 시작")
             self.lbl_status.config(text="상태: 대기", foreground="gray")
-            self._log("⏹ 타이머 중지")
+            self._log("⏹ Timer stopped")
         else:
             h = self.var_interval.get()
             if h == 0:
@@ -3024,7 +3024,7 @@ class App(tk.Tk):
             self._next_run_time = datetime.now() + timedelta(hours=h)
             self.btn_timer.config(text="⏹ 타이머 중지")
             self.lbl_status.config(text=f"상태: 타이머 실행 ({h}h)", foreground="green")
-            self._log(f"⏱ 타이머 시작 — {h}시간 주기")
+            self._log(f"⏱ Timer started — {h}h interval")
 
     def _tick(self):
         """매 초 카운트다운 업데이트"""
@@ -3082,7 +3082,7 @@ class App(tk.Tk):
         store.remove(kw)
         store.save()
         self._refresh_keywords()
-        self._log(f"🗑 키워드 삭제: {kw}")
+        self._log(f"🗑 Keyword deleted: {kw}")
 
     def _add_keyword_dialog(self):
         dialog = tk.Toplevel(self)

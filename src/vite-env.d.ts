@@ -119,7 +119,7 @@ declare global {
       rollback(files: string[], dirs: string[]): Promise<{ ok: boolean }>
     }
 
-    // ── reportAPI (PDF 보고서 내보내기) ──────────────────────────────────────────
+    // ── reportAPI (PDF report export) ──────────────────────────────────────────
     reportAPI?: {
       exportPdf(html: string, suggestedName?: string): Promise<{ ok: boolean; filePath?: string; reason?: string }>
     }

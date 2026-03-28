@@ -173,7 +173,7 @@ export default function Graph2D({ width, height }: Props) {
       const el = nodeEls.current.get(node.id)
       if (el) {
         if (el.tagName.toLowerCase() === 'rect') {
-          // 이미지 노드(rect): x/y를 중심 기준으로 업데이트 + rotate transform
+          // Image node (rect): update x/y relative to center + rotate transform
           const halfW = parseFloat(el.getAttribute('width') ?? '12') / 2
           el.setAttribute('x', String(node.x - halfW))
           el.setAttribute('y', String(node.y - halfW))
@@ -312,7 +312,7 @@ export default function Graph2D({ width, height }: Props) {
         simRef.current?.alphaTarget(0)
         draggingNodeRef.current = null
         setHoveredNode(null)
-        // 실제 드래그인 경우에만 tooltip 제거 (클릭이면 onClick에서 tooltip 표시됨)
+        // Only remove tooltip for actual drag (clicks show tooltip via onClick)
         if (isDraggedRef.current) setTooltip(null)
         isDraggedRef.current = false
       }
@@ -343,14 +343,14 @@ export default function Graph2D({ width, height }: Props) {
   const handleSVGMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     // Node drag takes priority over background pan
     if (draggingNodeRef.current) {
-      // 4px 임계값 초과 시에만 드래그로 판정
+      // Only classify as drag when exceeding 4px threshold
       if (!isDraggedRef.current) {
         const dx = e.clientX - mouseDownPosRef.current.x
         const dy = e.clientY - mouseDownPosRef.current.y
         if (dx * dx + dy * dy > 16) isDraggedRef.current = true
       }
-      if (!isDraggedRef.current) return  // 임계값 미달 → 아직 클릭 처리
-      setTooltip(null)  // 드래그 확정 시 tooltip 제거
+      if (!isDraggedRef.current) return  // Below threshold — still treating as click
+      setTooltip(null)  // Remove tooltip when drag is confirmed
       const { x, y } = clientToGraph(e.clientX, e.clientY)
       const simNode = simNodesRef.current.find(n => n.id === draggingNodeRef.current)
       if (simNode) {
@@ -467,7 +467,7 @@ export default function Graph2D({ width, height }: Props) {
 
   // Single click: select node and show tooltip
   const handleNodeClick = useCallback((nodeId: string, e: React.MouseEvent) => {
-    e.stopPropagation()  // SVG 빈공간 onClick으로 버블링 방지
+    e.stopPropagation()  // Prevent bubbling to SVG empty space onClick
     setSelectedNode(nodeId)
     setTooltip({ nodeId, x: e.clientX, y: e.clientY })
   }, [setSelectedNode])
@@ -492,7 +492,7 @@ export default function Graph2D({ width, height }: Props) {
     if (draggingNodeRef.current) return
     isPanningRef.current = false
     setHoveredNode(null)
-    // tooltip은 클릭으로 고정되므로 마우스가 노드를 벗어나도 유지
+    // Tooltip is pinned by click, so it persists when mouse leaves the node
   }, [setHoveredNode])
 
   // ── Neighbor highlight — O(k) delta updates via CSS class + data-hl attr ───
@@ -663,7 +663,7 @@ export default function Graph2D({ width, height }: Props) {
                 'data-node-id': node.id,
               }
               if (node.isImage) {
-                // 이미지 노드: 다이아몬드(마름모) — rect를 45도 회전
+                // Image node: diamond shape — rect rotated 45 degrees
                 const s = isSelected ? nr + 1.5 : Math.max(nr - 1, 2)
                 return (
                   <rect

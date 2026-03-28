@@ -35,22 +35,22 @@ export function useVaultLoader() {
   const loadVault = useCallback(
     async (dirPath: string) => {
       if (!window.vaultAPI) {
-        setError('Electron 환경이 아닙니다. 브라우저에서는 볼트를 로드할 수 없습니다.')
+        setError('Not an Electron environment. Cannot load vault from browser.')
         return
       }
       setIsLoading(true)
       setVaultReady(false)
-      setLoadingProgress(0, '볼트 초기화 중...')
+      setLoadingProgress(0, 'Initializing vault...')
       setError(null)
       try {
-        // ── 1단계: scanMetadata (mtime만, 파일 내용 없음) → 캐시 지문 확인 ──
+        // ── Step 1: scanMetadata (mtime only, no file content) → cache fingerprint check ──
         let docs = null
         let folders: string[] = []
         let imageRegistry: Record<string, { relativePath: string; absolutePath: string }> | null = null
 
         if (window.vaultAPI.scanMetadata) {
           try {
-            setLoadingProgress(2, '메타데이터 스캔 중...')
+            setLoadingProgress(2, 'Scanning metadata...')
             const meta = await window.vaultAPI.scanMetadata(dirPath)
             if (meta && meta.length > 0) {
               const docsFingerprint = buildDocsFingerprint(
@@ -58,8 +58,8 @@ export function useVaultLoader() {
               )
               const hit = await loadDocsCache(dirPath, docsFingerprint)
               if (hit) {
-                logger.debug(`[vault] 캐시 히트 — loadFiles·파싱 모두 건너뜀 (${hit.docs.length}개 문서)`)
-                setLoadingProgress(90, '캐시에서 복원 중...')
+                logger.debug(`[vault] cache hit — skipping loadFiles and parsing (${hit.docs.length} docs)`)
+                setLoadingProgress(90, 'Restoring from cache...')
                 docs = hit.docs
                 folders = hit.folders
                 imageRegistry = hit.imageRegistry
@@ -68,21 +68,21 @@ export function useVaultLoader() {
                 setImagePathRegistry(imageRegistry)
               }
             }
-          } catch { /* scanMetadata 실패 → loadFiles fallback */ }
+          } catch { /* scanMetadata failed → loadFiles fallback */ }
         }
 
-        // ── 2단계: 캐시 미스 시 loadFiles (파일 내용 포함) ─────────────────
+        // ── Step 2: on cache miss, loadFiles (with file content) ─────────────
         let files: VaultFile[] | null = null
         if (!docs) {
           const loaded = await window.vaultAPI.loadFiles(dirPath)
           files = loaded.files
           folders = loaded.folders ?? []
           imageRegistry = loaded.imageRegistry ?? null
-          logger.debug(`[vault] ${files?.length ?? 0}개 파일, ${folders.length}개 폴더, ${Object.keys(imageRegistry ?? {}).length}개 이미지 로드됨 (${dirPath})`)
+          logger.debug(`[vault] ${files?.length ?? 0} files, ${folders.length} folders, ${Object.keys(imageRegistry ?? {}).length} images loaded (${dirPath})`)
           setVaultFolders(folders)
           setImagePathRegistry(imageRegistry)
           setPendingFileCount(files?.length ?? 0)
-          setLoadingProgress(5, '파일 목록 로드 완료')
+          setLoadingProgress(5, 'File list loaded')
 
           if (!files || files.length === 0) {
             setLoadedDocuments(null)
@@ -92,20 +92,20 @@ export function useVaultLoader() {
           }
         }
 
-        // ── 3단계: 캐시 미스 시 전체 파싱 ──────────────────────────────────
+        // ── Step 3: full parse on cache miss ──────────────────────────────────
         if (!docs) {
           const total = files!.length
           docs = await parseVaultFilesAsync(files!, (parsed) => {
             const pct = 5 + Math.round((parsed / total) * 80)
-            setLoadingProgress(pct, `문서 파싱 중... (${parsed}/${total})`)
+            setLoadingProgress(pct, `Parsing documents... (${parsed}/${total})`)
           })
-          logger.debug(`[vault] ${docs.length}/${files!.length}개 문서 파싱 성공`)
+          logger.debug(`[vault] ${docs.length}/${files!.length} docs parsed successfully`)
 
-          // 파싱 완료 후 캐시 저장 (백그라운드, folders+imageRegistry 포함)
+          // Save cache after parsing complete (background, includes folders+imageRegistry)
           const metaForCache = files!.map(f => ({ relativePath: f.relativePath, mtime: f.mtime ?? 0 }))
           const fp = buildDocsFingerprint(metaForCache)
           saveDocsCache(dirPath, fp, docs, folders, imageRegistry)
-            .catch((e: unknown) => logger.warn('[docsCache] 저장 실패:', e))
+            .catch((e: unknown) => logger.warn('[docsCache] save failed:', e))
         }
         setLoadedDocuments(docs)
 
@@ -117,7 +117,7 @@ export function useVaultLoader() {
             const config = parsePersonaConfig(configContent)
             if (config) {
               loadVaultPersonas(config)
-              logger.debug('[vault] 페르소나 설정 로드됨')
+              logger.debug('[vault] persona config loaded')
             } else {
               resetVaultPersonas()
             }
@@ -130,7 +130,7 @@ export function useVaultLoader() {
 
         // Update graph (clear stale metrics cache from previous vault)
         clearMetricsCache()
-        setLoadingProgress(95, '완료 중...')
+        setLoadingProgress(95, 'Finalizing...')
 
         // 그래프 빌드 + BM25 인덱스: setTimeout(0)으로 UI 블로킹 방지
         // BM25 build/findImplicitLinks은 Web Worker에서 실행 (O(N²) 메인 스레드 블로킹 제거)
@@ -141,10 +141,10 @@ export function useVaultLoader() {
           if (useVaultStore.getState().vaultPath !== buildForVault) return
           try {
             const { nodes, links } = buildGraph(docs)
-            logger.debug(`[vault] 그래프: ${nodes.length}개 노드, ${links.length}개 링크`)
+            logger.debug(`[vault] graph: ${nodes.length} nodes, ${links.length} links`)
             setGraph(nodes, links)
           } catch (e: unknown) {
-            logger.warn('[vault] 그래프 빌드 실패:', e instanceof Error ? e.message : String(e))
+            logger.warn('[vault] graph build failed:', e instanceof Error ? e.message : String(e))
           }
 
           // BM25 인덱스: 캐시 히트 → 복원(빠름) + 워커에서 묵시적 링크 계산
@@ -160,7 +160,7 @@ export function useVaultLoader() {
               if (currentLinks.length > 0) {
                 findLinksFromCache(cached, adj)
                   .then(links => tfidfIndex.setImplicitLinks(links, adj))
-                  .catch((e: unknown) => logger.warn('[BM25] 묵시적 링크 계산 실패:', e instanceof Error ? e.message : String(e)))
+                  .catch((e: unknown) => logger.warn('[BM25] implicit link computation failed:', e instanceof Error ? e.message : String(e)))
               }
             } else {
               try {
@@ -169,16 +169,16 @@ export function useVaultLoader() {
                 tfidfIndex.restore(serialized)
                 tfidfIndex.setImplicitLinks(implicitLinks, adj)
                 saveTfIdfCache(dirPath, serialized)
-                  .catch((e: unknown) => logger.warn('[BM25] 캐시 저장 실패:', e instanceof Error ? e.message : String(e)))
+                  .catch((e: unknown) => logger.warn('[BM25] cache save failed:', e instanceof Error ? e.message : String(e)))
               } catch (e: unknown) {
-                logger.warn('[BM25] 워커 빌드 실패, 메인 스레드 폴백:', e instanceof Error ? e.message : String(e))
+                logger.warn('[BM25] worker build failed, main thread fallback:', e instanceof Error ? e.message : String(e))
                 if (useVaultStore.getState().vaultPath === buildForVault) {
                   try { tfidfIndex.build(docs) } catch { /* 재빌드도 실패 시 무음 */ }
                 }
               }
             }
           } catch (e: unknown) {
-            logger.warn('[BM25] 인덱스 초기화 실패, 재빌드 시도:', e instanceof Error ? e.message : String(e))
+            logger.warn('[BM25] index init failed, attempting rebuild:', e instanceof Error ? e.message : String(e))
             if (useVaultStore.getState().vaultPath === buildForVault) {
               try { tfidfIndex.build(docs) } catch { /* 재빌드도 실패 시 무음 */ }
             }
@@ -189,7 +189,7 @@ export function useVaultLoader() {
           if (geminiKey && docs.length > 0 && useVaultStore.getState().vaultPath === buildForVault) {
             vectorEmbedIndex.reset()
             vectorEmbedIndex.buildInBackground(docs, geminiKey, dirPath, fingerprint)
-              .catch((e: unknown) => logger.warn('[vector] 임베딩 빌드 실패:', e instanceof Error ? e.message : String(e)))
+              .catch((e: unknown) => logger.warn('[vector] embedding build failed:', e instanceof Error ? e.message : String(e)))
           }
         }, 0)
 
@@ -216,7 +216,7 @@ export function useVaultLoader() {
         // 볼트 로드 시 전체 사전 인덱싱을 하지 않아 메모리를 절약
         clearImageDataCache()
       } catch (err) {
-        const msg = err instanceof Error ? err.message : '파일 로드 실패'
+        const msg = err instanceof Error ? err.message : 'File load failed'
         logger.error('[vault] 로드 실패:', msg)
         setError(msg)
         setLoadedDocuments(null)
@@ -295,7 +295,7 @@ export function useVaultLoader() {
               if (currentLinks.length > 0) {
                 findLinksFromCache(cached, adj)
                   .then(links => tfidfIndex.setImplicitLinks(links, adj))
-                  .catch((e: unknown) => logger.warn('[BM25] 묵시적 링크 계산 실패:', e instanceof Error ? e.message : String(e)))
+                  .catch((e: unknown) => logger.warn('[BM25] implicit link computation failed:', e instanceof Error ? e.message : String(e)))
               }
             } else {
               try {
@@ -303,21 +303,21 @@ export function useVaultLoader() {
                 tfidfIndex.restore(serialized)
                 tfidfIndex.setImplicitLinks(implicitLinks, adj)
                 saveTfIdfCache(dirPath, serialized)
-                  .catch((e: unknown) => logger.warn('[BM25] 캐시 저장 실패:', e instanceof Error ? e.message : String(e)))
+                  .catch((e: unknown) => logger.warn('[BM25] cache save failed:', e instanceof Error ? e.message : String(e)))
               } catch (e: unknown) {
-                logger.warn('[BM25] 워커 빌드 실패, 메인 스레드 폴백:', e instanceof Error ? e.message : String(e))
+                logger.warn('[BM25] worker build failed, main thread fallback:', e instanceof Error ? e.message : String(e))
                 try { tfidfIndex.build(cachedDocs) } catch { /* 재빌드도 실패 시 무음 */ }
               }
             }
           } catch (e: unknown) {
-            logger.warn('[BM25] 인덱스 초기화 실패, 재빌드 시도:', e instanceof Error ? e.message : String(e))
+            logger.warn('[BM25] index init failed, attempting rebuild:', e instanceof Error ? e.message : String(e))
             try { tfidfIndex.build(cachedDocs) } catch { /* 재빌드도 실패 시 무음 */ }
           }
         }, 0)
 
         clearImageDataCache()
       } catch (err) {
-        const msg = err instanceof Error ? err.message : '복원 실패'
+        const msg = err instanceof Error ? err.message : 'Restore failed'
         setError(msg)
         setLoadedDocuments(null)
         resetToMock()

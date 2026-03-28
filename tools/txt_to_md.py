@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-txt_to_md.py — §4.6 TXT → Markdown 변환
+txt_to_md.py — §4.6 TXT → Markdown conversion
 
-처리 방침:
-  - 내용 그대로 보존, frontmatter만 자동 생성
-  - 파일명에서 날짜 패턴(YYYY-MM-DD, YYYYMMDD) 감지 시 date 필드 자동 설정
-  - 이미지 없음
-  - 변환 후 본문 50자 미만이면 스텁 경고 출력 (§3.1.1)
+Processing policy:
+  - Preserve content as-is, only auto-generate frontmatter
+  - Auto-set date field when date pattern (YYYY-MM-DD, YYYYMMDD) detected in filename
+  - No images
+  - Output stub warning if body under 50 chars after conversion (§3.1.1)
 
-사용법:
+Usage:
   python txt_to_md.py <input_dir> <output_dir> [--dry-run] [--verbose]
   python txt_to_md.py <single.txt> <output_dir> [--dry-run] [--verbose]
 """
@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 
 
-# ── 날짜 패턴 감지 ────────────────────────────────────────────────
+# ── Date patterns 감지 ────────────────────────────────────────────────
 DATE_PATTERNS = [
     (re.compile(r'(\d{4})-(\d{2})-(\d{2})'), '{}-{}-{}'),
     (re.compile(r'(\d{4})(\d{2})(\d{2})'),   '{}-{}-{}'),
@@ -31,7 +31,7 @@ STUB_CHAR_LIMIT = 50  # §3.1.1 스텁 기준
 
 
 def detect_date_from_stem(stem: str) -> str:
-    """파일명에서 날짜 추출. 없으면 오늘 날짜."""
+    """Extract date from filename. Defaults to today."""
     for pat, fmt in DATE_PATTERNS:
         m = pat.search(stem)
         if m:
@@ -45,7 +45,7 @@ def detect_date_from_stem(stem: str) -> str:
 
 
 def infer_type_from_stem(stem: str) -> str:
-    """파일명 키워드로 type 추론."""
+    """Infer type from filename keywords."""
     s = stem.lower()
     if any(k in s for k in ['회의', 'meeting', '미팅', '피드백', 'feedback']):
         return 'meeting'
@@ -59,7 +59,7 @@ def infer_type_from_stem(stem: str) -> str:
 
 
 def infer_tags_from_stem(stem: str, doc_type: str) -> list[str]:
-    """파일명 키워드로 태그 추론."""
+    """Infer tags from filename keywords."""
     tags = [doc_type]
     s = stem.lower()
     kw_map = {
@@ -77,13 +77,13 @@ def infer_tags_from_stem(stem: str, doc_type: str) -> list[str]:
 
 
 def body_char_count(text: str) -> int:
-    """실질 본문 글자 수 (공백/기호 제거)."""
+    """Actual body character count (excluding spaces/symbols)."""
     t = re.sub(r'[#\-\*>`\|=_~\s]', '', text)
     return len(t)
 
 
 def build_frontmatter(stem: str) -> str:
-    """파일명에서 frontmatter 자동 생성."""
+    """Auto-generate frontmatter from filename."""
     date     = detect_date_from_stem(stem)
     doc_type = infer_type_from_stem(stem)
     tags     = infer_tags_from_stem(stem, doc_type)
@@ -102,21 +102,21 @@ def build_frontmatter(stem: str) -> str:
 
 def convert_txt_to_md(txt_path: Path, out_dir: Path,
                       dry_run: bool = False, verbose: bool = False) -> dict:
-    """TXT 1개 → MD 변환."""
+    """Convert a single TXT to MD."""
     result = {'stub': False, 'skipped': False, 'output': None}
 
     try:
         raw = txt_path.read_text(encoding='utf-8', errors='replace')
     except Exception as e:
-        print(f"  오류: {txt_path.name} — {e}")
+        print(f"  Error: {txt_path.name} — {e}")
         result['skipped'] = True
         return result
 
-    # 이미 frontmatter가 있는 경우
+    # If frontmatter already exists
     if raw.startswith('---'):
         result['skipped'] = True
         if verbose:
-            print(f"  건너뜀 (frontmatter 있음): {txt_path.name}")
+            print(f"  Skipped (frontmatter 있음): {txt_path.name}")
         return result
 
     fm      = build_frontmatter(txt_path.stem)
@@ -142,9 +142,9 @@ def convert_txt_to_md(txt_path: Path, out_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(description='§4.6 TXT → Markdown 변환')
-    parser.add_argument('input',      help='TXT 파일 또는 TXT 파일이 있는 폴더')
-    parser.add_argument('output_dir', help='출력 폴더 (active/ 등)')
-    parser.add_argument('--dry-run',  action='store_true', help='파일 생성 없이 미리보기')
+    parser.add_argument('input',      help='TXT file or folder containing TXT files')
+    parser.add_argument('output_dir', help='Output folder (e.g. active/)')
+    parser.add_argument('--dry-run',  action='store_true', help='Preview without creating files')
     parser.add_argument('--verbose', '-v', action='store_true')
     args = parser.parse_args()
 
@@ -157,7 +157,7 @@ def main():
     elif input_path.is_dir():
         txt_files = sorted(input_path.glob('*.txt'))
     else:
-        print(f"오류: {input_path} 없음"); sys.exit(1)
+        print(f"Error: {input_path} not found"); sys.exit(1)
 
     total = converted = stubs = skipped = 0
     for txt in txt_files:
@@ -171,11 +171,11 @@ def main():
                 stubs += 1
 
     print(f"\n{'='*50}")
-    print(f"§4.6 txt_to_md 완료{'  [DRY-RUN]' if args.dry_run else ''}")
+    print(f"§4.6 txt_to_md Complete{'  [DRY-RUN]' if args.dry_run else ''}")
     print(f"{'='*50}")
-    print(f"  대상 TXT:  {total}개")
-    print(f"  건너뜀:    {skipped}개 (frontmatter 이미 있음)")
-    print(f"  변환 완료: {converted}개")
+    print(f"  Target TXTs:  {total}개")
+    print(f"  Skipped:    {skipped}개 (frontmatter 이미 있음)")
+    print(f"  변환 Complete: {converted}개")
     if stubs:
         print(f"  ⚠️ 스텁(50자 미만): {stubs}개 → scan_cleanup.py --fix 대상")
 

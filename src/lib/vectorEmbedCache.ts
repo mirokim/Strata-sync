@@ -1,8 +1,8 @@
 /**
  * vectorEmbedCache.ts — IndexedDB persistence for vector embeddings.
  *
- * 볼트 문서의 OpenAI text-embedding-3-small 벡터를 영구 저장합니다.
- * 볼트 지문(fingerprint)이 바뀌면 캐시 미스로 처리합니다.
+ * Permanently stores OpenAI text-embedding-3-small vectors for vault documents.
+ * Treats it as a cache miss when the vault fingerprint changes.
  */
 
 const DB_NAME = 'strata-sync-vector-embed'
@@ -54,8 +54,8 @@ async function idbPut(db: IDBDatabase, key: string, value: unknown): Promise<voi
 // ── Public API ────────────────────────────────────────────────────────────
 
 /**
- * IndexedDB에서 벡터 임베딩 캐시를 읽습니다.
- * 지문 불일치 / 캐시 없음 시 null 반환.
+ * Reads vector embedding cache from IndexedDB.
+ * Returns null on fingerprint mismatch or cache miss.
  */
 export async function loadVectorEmbedCache(
   vaultPath: string,
@@ -75,7 +75,7 @@ export async function loadVectorEmbedCache(
 }
 
 /**
- * 벡터 임베딩 캐시를 IndexedDB에 저장합니다.
+ * Saves vector embedding cache to IndexedDB.
  */
 export async function saveVectorEmbedCache(
   vaultPath: string,
@@ -90,12 +90,12 @@ export async function saveVectorEmbedCache(
     }
     await idbPut(db, vaultPath, record)
   } catch {
-    // 캐시 저장 실패는 silent — 앱 동작에 영향 없음
+    // Cache save failure is silent — does not affect app behavior
   }
 }
 
 /**
- * 특정 볼트의 벡터 캐시를 삭제합니다.
+ * Deletes the vector cache for a specific vault.
  */
 export async function invalidateVectorEmbedCache(vaultPath: string): Promise<void> {
   try {

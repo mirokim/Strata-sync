@@ -1,6 +1,6 @@
 /**
- * 대규모 검색 파이프라인 검증 — 100개 시나리오.
- * 캐릭터, 세계관, 기획/시스템, 아트/기술, 게임모드, 회의/보고, 레벨/맵, 엣지케이스 전방위.
+ * Large-scale search pipeline verification — 100 scenarios.
+ * Covers characters, world-building, planning/systems, art/tech, game modes, meetings/reports, level/map, and edge cases.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import * as fs from 'fs'
@@ -32,7 +32,7 @@ function loadDir(dir: string, prefix: string): LoadedDocument[] {
 
 beforeAll(() => {
   allDocs = [...loadDir(VAULT, ''), ...loadDir(path.join(VAULT, 'active'), 'active'), ...loadDir(path.join(VAULT, '.archive'), '.archive')]
-  console.log(`\n📂 볼트: ${allDocs.length}개`)
+  console.log(`\n📂 Vault: ${allDocs.length} docs`)
   useVaultStore.setState({ loadedDocuments: allDocs })
   useGraphStore.setState({ links: [] })
   tfidf = new TfIdfIndex()
@@ -74,9 +74,9 @@ function chk(label: string, ok: boolean) { console.log(`  ${ok ? '✅' : '❌'} 
 
 // ── 100 Scenarios ───────────────────────────────────────────────────────────
 
-describe('100개 시나리오 대규모 검증', () => {
+describe('100 scenarios large-scale verification', () => {
 
-  // ━━━ 캐릭터 (1-15) ━━━
+  // ━━━ Characters (1-15) ━━━
 
   it('001: 캐릭터G 쇼군', () => { const r = S('캐릭터G 쇼군'); P('캐릭터G 쇼군', r); chk('Top-3 캐릭터G 쇼군', has(r, 3, '캐릭터G 쇼군', '캐릭터G')) })
   it('002: 캐릭터E 캐릭터 설정', () => { const r = S('캐릭터E 캐릭터 설정'); P('캐릭터E 캐릭터', r); chk('Top-5 캐릭터E', has(r, 5, '캐릭터E')) })
@@ -94,7 +94,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('014: 캐릭터 R&D 260106', () => { const r = S('캐릭터 R&D'); P('캐릭터 R&D', r); chk('Top-5 캐릭터 R', has(r, 5, 'r_d', 'r&d', '캐릭터')) })
   it('015: 캐릭터별 CC FX 연출', () => { const r = S('캐릭터별 CC FX 연출'); P('캐릭터별 CC FX', r); chk('Top-3 CC/FX', has(r, 3, 'cc', 'fx')) })
 
-  // ━━━ 세계관 (16-25) ━━━
+  // ━━━ World-building (16-25) ━━━
 
   it('016: 센트럴 사도 설정', () => { const r = S('센트럴 사도 설정'); P('센트럴 사도', r); chk('Top-5 센트럴', has(r, 5, '센트럴')) })
   it('017: 노든 마법진 체계', () => { const r = S('노든 마법진 체계'); P('노든 마법진', r); chk('Top-5 노든/마법진', has(r, 5, '노든')) })
@@ -107,7 +107,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('024: 에녹 1막 정례', () => { const r = S('에녹 1막'); P('에녹 1막', r); chk('Top-5 에녹', has(r, 5, '에녹')) })
   it('025: 퀘스트 시나리오 기획', () => { const r = S('퀘스트 시나리오 기획'); P('퀘스트 시나리오', r); chk('Top-5 퀘스트/시나리오', has(r, 5, '퀘스트', '시나리오')) })
 
-  // ━━━ 기획/시스템 (26-40) ━━━
+  // ━━━ Planning/Systems (26-40) ━━━
 
   it('026: 매치메이킹 변경', () => { const r = S('매치메이킹 변경'); P('매치메이킹', r); chk('Top-3 매치메이킹/매칭', has(r, 3, '매치메이킹', '매칭')) })
   it('027: 소환 시스템 요약', () => { const r = S('소환 시스템 요약'); P('소환 시스템', r); chk('Top-5 소환 시스템', has(r, 5, '소환')) })
@@ -125,7 +125,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('039: 맵 데이터 추가 매뉴얼', () => { const r = S('맵 데이터 추가 매뉴얼'); P('맵 데이터 매뉴얼', r); chk('Top-5 맵 데이터/매뉴얼', has(r, 5, '맵 데이터', '메뉴얼', '매뉴얼')) })
   it('040: 태그 정의서', () => { const r = S('태그 정의서'); P('태그 정의서', r); chk('Top-3 태그 정의', has(r, 3, '태그', '정의')) })
 
-  // ━━━ 게임 모드 (41-55) ━━━
+  // ━━━ Game Modes (41-55) ━━━
 
   it('041: MOBA 모드 리스폰 규칙', () => { const r = S('MOBA 모드 리스폰 규칙'); P('MOBA 리스폰', r); chk('Top-3 MOBA/리스폰', has(r, 3, 'moba', '리스폰')) })
   it('042: 난투전 사망 레벨 다운', () => { const r = S('난투전 사망 레벨 다운'); P('난투전 사망 레벨', r); chk('Top-3 난투전 사망', has(r, 3, '사망', '레벨 다운')) })
@@ -143,7 +143,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('054: 플레이 시나리오 1차', () => { const r = S('플레이 시나리오 1차'); P('플레이 시나리오', r); chk('Top-5 플레이 시나리오', has(r, 5, '플레이 시나리오', '시나리오')) })
   it('055: 게임 플레이 구조 최신', () => { const r = S('게임 플레이 구조'); P('게임 플레이 구조', r); chk('Top-3 게임 플레이 구조', has(r, 3, '게임 플레이 구조', '플레이 구조')) })
 
-  // ━━━ 아트/기술 (56-70) ━━━
+  // ━━━ Art/Tech (56-70) ━━━
 
   it('056: 엣지 디텍트 라인 셰이더', () => { const r = S('엣지 디텍트 라인 셰이더'); P('엣지 디텍트', r); chk('Top-3 엣지/셰이더', has(r, 3, '엣지', '셰이더')) })
   it('057: URP 캐릭터 셰이더 테스트', () => { const r = S('URP 캐릭터 셰이더 테스트'); P('URP 캐릭터 셰이더', r); chk('Top-3 URP/셰이더', has(r, 3, 'urp', '셰이더', '쉐이더')) })
@@ -161,7 +161,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('069: Voxel Tool', () => { const r = S('Voxel Tool'); P('Voxel Tool', r); chk('Top-3 Voxel', has(r, 3, 'voxel')) })
   it('070: 맵파괴 R&D 프로젝트A', () => { const r = S('맵파괴 R&D 프로젝트A'); P('맵파괴 R&D', r); chk('Top-5 맵파괴/프로젝트A', has(r, 5, '맵파괴', '프로젝트A')) })
 
-  // ━━━ 레벨/맵 디자인 (71-80) ━━━
+  // ━━━ Level/Map Design (71-80) ━━━
 
   it('071: 시밤 컨셉 블록 발주', () => { const r = S('시밤 컨셉 블록 발주'); P('시밤 컨셉', r); chk('Top-5 시밤', has(r, 5, '시밤')) })
   it('072: 새 월드맵 씬 만들기', () => { const r = S('새 월드맵 씬 만들기'); P('월드맵 씬', r); chk('Top-3 월드맵', has(r, 3, '월드맵')) })
@@ -174,7 +174,7 @@ describe('100개 시나리오 대규모 검증', () => {
   it('079: M8 발리스타 상세기획서', () => { const r = S('M8 발리스타 상세기획서'); P('M8 발리스타', r); chk('Top-3 발리스타/M8', has(r, 3, '발리스타', 'm8')) })
   it('080: 월드맵 정례보고', () => { const r = S('월드맵 정례보고'); P('월드맵 정례보고', r); chk('Top-5 월드맵', has(r, 5, '월드맵')) })
 
-  // ━━━ 회의/보고/피드백 (81-90) ━━━
+  // ━━━ Meetings/Reports/Feedback (81-90) ━━━
 
   it('081: 회장님 시연 보고 피드백', () => { const r = S('회장님 시연 보고 피드백'); P('회장님 시연', r); chk('Top-3 회장님/시연', has(r, 3, '회장님')) })
   it('082: 기획 리뷰 보고 피드백', () => { const r = S('기획 리뷰 보고 피드백'); P('기획 리뷰', r); chk('Top-3 기획 리뷰', has(r, 3, '기획 리뷰', '리뷰 보고')) })
@@ -187,10 +187,10 @@ describe('100개 시나리오 대규모 검증', () => {
   it('089: 추가 대미지 킥오프 자료', () => { const r = S('추가 대미지 킥오프 자료'); P('대미지 킥오프', r); chk('Top-3 대미지/킥오프', has(r, 3, '대미지', '킥오프')) })
   it('090: 캐릭터 논의 회의록 20250723', () => { const r = S('캐릭터 논의 회의록 20250723'); P('캐릭터 논의 회의록', r); chk('Top-3 캐릭터 논의/회의록', has(r, 3, '캐릭터 논의', '20250723')) })
 
-  // ━━━ 엣지 케이스 (91-100) ━━━
+  // ━━━ Edge Cases (91-100) ━━━
 
-  it('091: SGE-Project A (영문 약어)', () => { const r = S('SGE-Project A'); P('SGE-Project A', r); chk('Top-5 SGE', has(r, 5, 'sge')) })
-  it('092: Virtuos Services Overview (완전 영문)', () => { const r = S('Virtuos Services Overview'); P('Virtuos Services', r); chk('Top-3 Virtuos', has(r, 3, 'virtuos')) })
+  it('091: SGE-Project A (English abbreviation)', () => { const r = S('SGE-Project A'); P('SGE-Project A', r); chk('Top-5 SGE', has(r, 5, 'sge')) })
+  it('092: Virtuos Services Overview (fully English)', () => { const r = S('Virtuos Services Overview'); P('Virtuos Services', r); chk('Top-3 Virtuos', has(r, 3, 'virtuos')) })
   it('093: 파쇄장 R-Click', () => { const r = S('파쇄장 R-Click'); P('파쇄장', r); chk('Top-5 파쇄장', has(r, 5, '파쇄장')) })
   it('094: 산요강신', () => { const r = S('산요강신'); P('산요강신', r); chk('Top-5 산요강신/캐릭터C', has(r, 5, '산요강신', '산요')) })
   it('095: 영웅 페이지', () => { const r = S('영웅 페이지'); P('영웅 페이지', r); chk('Top-5 영웅 페이지', has(r, 5, '영웅 페이지', '영웅')) })

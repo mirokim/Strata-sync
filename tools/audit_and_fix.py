@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-audit_and_fix.py — §13.2 Vault 자동 교정
+audit_and_fix.py — §13.2 Vault auto-correction
 
-자동 수정 항목:
-  F1. 중첩 wikilink   [[[stem]] (3열림+2닫힘), [[[[stem]]]] (4중+) → [[stem]]
-  F2. HTML 잔재 제거  <br>, <b>, <strong>, <em>, <span>, <div> 등
-  F3. 연속 빈줄 축소  3줄+ → 2줄 (frontmatter 외부)
-  F4. 빈 tags 보완    tags: [] → 파일명+type 기반 자동 추론
-  F5. 깨진 링크 수정  [[X]] 중 prefix 매칭으로 실존 stem 교체
+Auto-fix items:
+  F1. Nested wikilink   [[[stem]] (3-open+2-close), [[[[stem]]]] (4+) → [[stem]]
+  F2. Remove HTML remnants  <br>, <b>, <strong>, <em>, <span>, <div>, etc.
+  F3. Reduce consecutive blank lines  3+ → 2 (outside frontmatter)
+  F4. Supplement empty tags    tags: [] → auto-infer from filename+type
+  F5. Fix broken links  Replace [[X]] with existing stem via prefix matching
 
-감사 보고 항목 (수정하지 않고 목록 출력):
-  R1. 300자 미만 본문 (내용 빈약 파일)
-  R2. 반복 wikilink  (같은 stem 3회+ 등장)
-  R3. 파일 크기 분포
+Audit report items (listed without modification):
+  R1. Body under 300 chars (low-content files)
+  R2. Repeated wikilinks  (same stem appearing 3+ times)
+  R3. File size distribution
 
-사용법:
+Usage:
   python audit_and_fix.py <active_dir> [--dry-run] [--verbose]
 """
 
@@ -25,17 +25,17 @@ from pathlib import Path
 from collections import Counter
 
 
-# ── §13.3 MANUAL_MAP — 자동 해결 불가 broken link 수동 등록 ──────
-# 형식: 'broken_stem': 'real_stem'
-# 예:  'TLS': 'TLS(TimeLineSkill)시스템_588781620',
+# ── §13.3 MANUAL_MAP — Manual registration for unresolvable broken links ──────
+# Format: 'broken_stem': 'real_stem'
+# Example: 'TLS': 'TLS(TimeLineSkill)시스템_588781620',
 #      '2026.01.07 피드백_ID': '[2026.01.07] 피드백_ID',
 MANUAL_MAP: dict[str, str] = {
-    # ── 여기에 수동 등록 ──
+    # ── Register manually here ──
     # 'broken_stem': 'real_stem',
 }
 
 
-# ── 태그 자동 추론 ───────────────────────────────────────────────
+# ── Auto-infer tags ───────────────────────────────────────────────
 def infer_tags(stem: str, doc_type: str) -> list[str]:
     tags = [doc_type]
     s = stem.lower()
@@ -58,24 +58,24 @@ def infer_tags(stem: str, doc_type: str) -> list[str]:
     return list(dict.fromkeys(tags))
 
 
-# ── F1: 중첩 wikilink 수정 ───────────────────────────────────────
+# ── F1: Fix nested wikilinks ───────────────────────────────────────
 def fix_nested_wikilinks(content: str) -> tuple[str, int]:
     """[[[stem]] (3열림+2닫힘), [[[[stem]]]] (4중+) → [[stem]] 정규화."""
     count = 0
-    # 4중 이상 브래킷 (양쪽 모두 3+)
+    # 4+ brackets (both sides 3+)
     new, n = re.subn(r'\[{3,}([^\[\]]+)\]{3,}', r'[[\1]]', content)
     count += n
-    # 3열림+2닫힘 패턴: [[[stem]] — 마크다운 표 셀 내 자주 발생
+    # 3-open+2-close pattern: [[[stem]] — frequently occurs in markdown table cells
     new, n = re.subn(r'\[\[\[([^\[\]]+)\]\](?!\])', r'[[\1]]', new)
     count += n
     return new, count
 
 
-# ── F2: HTML 잔재 제거 ───────────────────────────────────────────
+# ── F2: Remove HTML remnants ───────────────────────────────────────────
 HTML_TAGS = re.compile(
-    r'<(br|hr)\s*/?>|'                              # 빈 태그
-    r'</(b|strong|em|i|span|div|p|ul|li|a)>|'       # 닫는 태그
-    r'<(b|strong|em|i|span|div|p|ul|li|a)(\s[^>]*)?>',  # 여는 태그
+    r'<(br|hr)\s*/?>|'                              # Empty tags
+    r'</(b|strong|em|i|span|div|p|ul|li|a)>|'       # Closing tags
+    r'<(b|strong|em|i|span|div|p|ul|li|a)(\s[^>]*)?>',  # Opening tags
     re.IGNORECASE
 )
 HTML_COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
@@ -85,18 +85,18 @@ ENTITY_MAP   = {'amp': '&', 'lt': '<', 'gt': '>', 'nbsp': ' ', 'quot': '"'}
 
 def fix_html_remnants(content: str) -> tuple[str, int]:
     count = 0
-    # 주석 제거
+    # Remove comments
     new, n = HTML_COMMENT.subn('', content); count += n
-    # 태그 제거
+    # Remove tags
     new, n = HTML_TAGS.subn('', new); count += n
-    # HTML 엔티티 복원
+    # Restore HTML entities
     new2 = HTML_ENTITY.sub(lambda m: ENTITY_MAP.get(m.group(1), m.group(0)), new)
     if new2 != new:
         count += 1
     return new2, count
 
 
-# ── F3: 연속 빈줄 축소 (frontmatter 외부만) ──────────────────────
+# ── F3: Reduce consecutive blank lines (outside frontmatter only) ──────────────────────
 def fix_blank_lines(content: str) -> tuple[str, int]:
     """3줄 이상 연속 빈줄 → 2줄."""
     fm_end = -1
@@ -112,7 +112,7 @@ def fix_blank_lines(content: str) -> tuple[str, int]:
     return fm + new_body, n
 
 
-# ── F4: 빈 tags 보완 ─────────────────────────────────────────────
+# ── F4: Supplement empty tags ─────────────────────────────────────────────
 def fix_empty_tags(content: str, stem: str) -> tuple[str, bool]:
     m = re.search(r'tags:\s*\[([^\]]*)\]', content)
     if not m or m.group(1).strip():
@@ -124,7 +124,7 @@ def fix_empty_tags(content: str, stem: str) -> tuple[str, bool]:
     return new, True
 
 
-# ── F5: 깨진 링크 수정 (MANUAL_MAP → slash_map → prefix 매칭) ────
+# ── F5: Fix broken links (MANUAL_MAP → slash_map → prefix matching) ────
 def fix_broken_links(content: str, all_stems: set, prefix_map: dict) -> tuple[str, int]:
     """§13.3 기준: MANUAL_MAP → prefix 매칭 순서로 broken link 수정."""
     fixed = 0
@@ -144,12 +144,12 @@ def fix_broken_links(content: str, all_stems: set, prefix_map: dict) -> tuple[st
 
         display = inner.split('|')[1].strip() if '|' in inner else stem
 
-        # 1순위: MANUAL_MAP
+        # Priority 1: MANUAL_MAP
         if stem in MANUAL_MAP:
             fixed += 1
             return f'[[{MANUAL_MAP[stem]}|{display}]]'
 
-        # 2순위: prefix 매칭 (§13.2.1 괄호 절단 버그 자동 복구)
+        # Priority 2: Prefix matching (§13.2.1 auto-fix parenthesis truncation bug)
         real = prefix_map.get(stem)
         if real:
             fixed += 1
@@ -170,7 +170,7 @@ def build_prefix_map(all_stems: set) -> dict:
     return prefix_map
 
 
-# ── R1: 300자 미만 본문 감사 ─────────────────────────────────────
+# ── R1: Audit body text under 300 chars ─────────────────────────────────────
 def has_image_content(content: str) -> bool:
     """§3.1.1: 이미지 링크(![[...]]) 또는 테이블이 있으면 실질 콘텐츠로 인정."""
     return bool(re.search(r'!\[\[[^\]]+\]\]', content)) or \
@@ -178,9 +178,9 @@ def has_image_content(content: str) -> bool:
 
 
 def audit_thin_docs(content: str) -> int:
-    """본문 텍스트 길이 반환. 이미지/테이블 파일은 -1 반환 (제외 대상)."""
+    """Return body text length. Returns -1 for image/table files (excluded)."""
     if has_image_content(content):
-        return -1   # 이미지·테이블 포함 파일 → 300자 미만 경고 제외
+        return -1   # Image/table file → excluded from under-300 warning
     fm_end = content.find('\n---\n', 4) if content.startswith('---') else -1
     body   = content[fm_end + 5:] if fm_end != -1 else content
     text   = re.sub(r'\[\[([^\]]+)\]\]', lambda m: (m.group(1).split('|')[-1]), body)
@@ -188,7 +188,7 @@ def audit_thin_docs(content: str) -> int:
     return len(text.strip())
 
 
-# ── R2: 반복 wikilink ────────────────────────────────────────────
+# ── R2: Repeated wikilinks ────────────────────────────────────────────
 def audit_repeated_links(content: str, threshold: int = 3) -> list[str]:
     links  = re.findall(r'(?<!!)\[\[([^\]]+)\]\]', content)
     stems  = [l.split('|')[0].strip() for l in links]
@@ -196,7 +196,7 @@ def audit_repeated_links(content: str, threshold: int = 3) -> list[str]:
     return [s for s, c in counts.items() if c >= threshold]
 
 
-# ── 메인 ─────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────────────
 def run(active_dir: Path, dry_run: bool = False, verbose: bool = False) -> dict:
     all_stems  = {md.stem for md in active_dir.glob('*.md')}
     prefix_map = build_prefix_map(all_stems)
@@ -247,18 +247,18 @@ def run(active_dir: Path, dry_run: bool = False, verbose: bool = False) -> dict:
             if not dry_run:
                 md.write_text(content, encoding='utf-8')
             if verbose:
-                print(f"  수정: {md.name[:60]}")
+                print(f"  Modified: {md.name[:60]}")
 
-        # 감사 (수정과 별개)
+        # Audit (separate from fixes)
         body_len = audit_thin_docs(content)
-        if body_len != -1 and body_len < 300:   # -1이면 이미지/테이블 파일 → 제외
+        if body_len != -1 and body_len < 300:   # -1 means image/table file → excluded
             stats['thin_docs'].append(md.name)
 
         repeated = audit_repeated_links(content)
         if repeated:
             stats['repeated_links'][md.name] = repeated
 
-        # 파일 크기 분포
+        # File size distribution
         sz = md.stat().st_size
         if sz < 2000:    stats['size_dist']['<2KB'] += 1
         elif sz < 10000: stats['size_dist']['2–10KB'] += 1
@@ -270,16 +270,16 @@ def run(active_dir: Path, dry_run: bool = False, verbose: bool = False) -> dict:
 
 def print_report(stats: dict, dry_run: bool):
     print(f"\n{'='*55}")
-    print(f"§13.2 audit_and_fix 완료{'  [DRY-RUN]' if dry_run else ''}")
+    print(f"§13.2 audit_and_fix Complete{'  [DRY-RUN]' if dry_run else ''}")
     print(f"{'='*55}")
-    print(f"  F1 중첩 wikilink 수정: {stats['nested_fixed']}건")
+    print(f"  F1 중첩 wikilink Modified: {stats['nested_fixed']}건")
     print(f"  F2 HTML 잔재 제거:     {stats['html_fixed']}건")
     print(f"  F3 연속 빈줄 축소:     {stats['blank_fixed']}건")
-    print(f"  F4 빈 tags 보완:       {stats['tags_fixed']}개 파일")
-    print(f"  F5 깨진 링크 수정:     {stats['links_fixed']}건")
-    print(f"  총 변경 파일:          {stats['files_changed']}개")
+    print(f"  F4 빈 tags 보완:       {stats['tags_fixed']} files")
+    print(f"  F5 깨진 링크 Modified:     {stats['links_fixed']}건")
+    print(f"  Total changed files:          {stats['files_changed']}개")
 
-    print(f"\n── 감사 보고 ───────────────────────────────────")
+    print(f"\n── Audit report ───────────────────────────────────")
     thin = stats['thin_docs']
     print(f"  R1 본문 300자 미만:    {len(thin)}개")
     if thin:
@@ -289,25 +289,25 @@ def print_report(stats: dict, dry_run: bool):
             print(f"     ... 외 {len(thin)-10}개")
 
     rep = stats['repeated_links']
-    print(f"  R2 반복 wikilink(3+): {len(rep)}개 파일")
+    print(f"  R2 반복 wikilink(3+): {len(rep)} files")
     for fname, stems in list(rep.items())[:5]:
         print(f"     · {fname[:50]}: {stems[:3]}")
 
-    print(f"\n── 파일 크기 분포 ──────────────────────────────")
+    print(f"\n── File size distribution ──────────────────────────────")
     for label, cnt in sorted(stats['size_dist'].items()):
         print(f"  {label:>8}: {cnt:4}개")
 
 
 def main():
     parser = argparse.ArgumentParser(description='§13.2 Vault 자동 교정')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
-    parser.add_argument('--dry-run', action='store_true', help='파일 수정 없이 미리보기')
+    parser.add_argument('active_dir', help='active/ folder path')
+    parser.add_argument('--dry-run', action='store_true', help='Preview without modifying files')
     parser.add_argument('--verbose', '-v', action='store_true')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 없음")
+        print(f"Error: {active_dir} not found")
         sys.exit(1)
 
     print(f"§13.2 audit_and_fix 시작 ({'DRY-RUN' if args.dry_run else '실제 수정'})...")

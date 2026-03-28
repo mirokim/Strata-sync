@@ -25,7 +25,7 @@ function ConnectionBadge() {
         borderRadius: 3, padding: '1px 5px',
         cursor: 'default',
       }}
-      title={isApi ? 'API 모드 — 직접 LLM 호출' : 'MCP 모드 — Claude Code 경유'}
+      title={isApi ? 'API mode — direct LLM calls' : 'MCP mode — via Claude Code'}
     >
       {isApi ? 'API' : 'MCP'}
     </span>
@@ -119,7 +119,7 @@ export default function TopBar() {
             borderRadius: 3,
             marginLeft: 4,
             cursor: 'default',
-          }} title={`현재 채팅 모델: ${chatModelId}`}>
+          }} title={`Current chat model: ${chatModelId}`}>
             {chatModelShort}
           </span>
         )}
@@ -134,7 +134,7 @@ export default function TopBar() {
           onClick={toggleNodeLabels}
           className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
           style={{ color: showNodeLabels ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}
-          title={showNodeLabels ? '노드 라벨 숨기기' : '노드 라벨 표시'}
+          title={showNodeLabels ? 'Hide node labels' : 'Show node labels'}
           aria-label="Toggle node labels"
         >
           <Type size={13} />
@@ -146,7 +146,7 @@ export default function TopBar() {
             onClick={() => setGraphMode(graphMode === '3d' ? '2d' : '3d')}
             className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
             style={{ color: 'var(--color-text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}
-            title={`${graphMode.toUpperCase()} 그래프 — 클릭하면 ${graphMode === '3d' ? '2D' : '3D'}로 전환`}
+            title={`${graphMode.toUpperCase()} graph — click to switch to ${graphMode === '3d' ? '2D' : '3D'}`}
             aria-label={`Switch to ${graphMode === '3d' ? '2D' : '3D'} graph`}
           >
             {graphMode === '3d' ? <Monitor size={13} /> : <Monitor size={13} style={{ opacity: 0.5 }} />}
@@ -158,7 +158,7 @@ export default function TopBar() {
           onClick={toggleSettingsPanel}
           className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
           style={{ color: 'var(--color-text-muted)' }}
-          title="설정"
+          title="Settings"
           aria-label="Open settings"
           data-testid="settings-button"
         >
@@ -171,14 +171,14 @@ export default function TopBar() {
             onClick={() => window.windowAPI?.toggleDevTools()}
             className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
             style={{ color: 'var(--color-text-muted)' }}
-            title="개발자 도구"
+            title="Developer Tools"
             aria-label="Toggle developer tools"
           >
             <Terminal size={13} />
           </button>
         )}
 
-        {/* Slack bot — Electron only, token 설정 시 표시 */}
+        {/* Slack bot — Electron only, shown when token is configured */}
         {isElectron && slackConfigured && (
           <button
             onClick={() => botRunning ? stopBot() : startBot()}
@@ -188,7 +188,7 @@ export default function TopBar() {
               background: botRunning ? 'rgba(96,165,250,0.08)' : 'transparent',
               color: botRunning ? 'var(--color-accent)' : 'var(--color-text-muted)',
             }}
-            title={botRunning ? '슬랙봇 정지' : '슬랙봇 시작'}
+            title={botRunning ? 'Stop Slack bot' : 'Start Slack bot'}
             aria-label="Toggle Slack bot"
           >
             <span style={{
@@ -208,7 +208,7 @@ export default function TopBar() {
           onClick={toggleLeftPanel}
           className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
           style={{ color: leftPanelCollapsed ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}
-          title={leftPanelCollapsed ? '왼쪽 패널 열기' : '왼쪽 패널 닫기'}
+          title={leftPanelCollapsed ? 'Open left panel' : 'Close left panel'}
           aria-label="Toggle left panel"
         >
           <PanelLeft size={14} />
@@ -218,7 +218,7 @@ export default function TopBar() {
           onClick={toggleRightPanel}
           className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
           style={{ color: rightPanelCollapsed ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}
-          title={rightPanelCollapsed ? '오른쪽 패널 열기' : '오른쪽 패널 닫기'}
+          title={rightPanelCollapsed ? 'Open right panel' : 'Close right panel'}
           aria-label="Toggle right panel"
         >
           <PanelRight size={14} />
@@ -228,7 +228,7 @@ export default function TopBar() {
           onClick={toggleEditAgentPanel}
           className={cn('flex items-center justify-center w-7 h-7 rounded transition-colors', 'hover:bg-[var(--color-bg-hover)]')}
           style={{ color: editAgentPanelVisible ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
-          title={editAgentPanelVisible ? '편집 에이전트 닫기' : '편집 에이전트 열기'}
+          title={editAgentPanelVisible ? 'Close edit agent' : 'Open edit agent'}
           aria-label="Toggle edit agent panel"
         >
           <Pencil size={13} />

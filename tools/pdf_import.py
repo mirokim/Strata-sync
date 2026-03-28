@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-pdf_import.py — PDF → Markdown 변환 후 볼트 저장
+pdf_import.py — PDF → Markdown conversion and vault storage
 
 opendataloader-pdf 라이브러리 사용 (벤치마크 1위 PDF 파서)
   pip install -U opendataloader-pdf
 
-사용법:
+Usage:
   python pdf_import.py <pdf_path_or_dir> <output_dir> [--title <제목>]
 
-출력:
+Output:
   - <output_dir>/<title>.md  (단일 PDF)
   - <output_dir>/<각 파일명>.md  (폴더 입력)
 """
@@ -97,7 +97,7 @@ def main() -> None:
     title = args.title.strip() or None
     results = convert_pdf(input_path, args.output, title)
 
-    print(f'PDF 변환 완료 ({len(results)}개)')
+    print(f'PDF 변환 Complete ({len(results)}개)')
     for r in results:
         print(r)
 

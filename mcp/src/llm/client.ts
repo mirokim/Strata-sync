@@ -110,7 +110,7 @@ export async function chatWithPersona(
   const { getPersonaPrompt } = await import('../persona.js')
   let system = getPersonaPrompt(persona)
   if (config.responseInstructions) system += `\n\n${config.responseInstructions}`
-  if (ragContext) system += `\n\n=== 관련 문서 컨텍스트 ===\n${ragContext}\n=== 컨텍스트 끝 ===`
+  if (ragContext) system += `\n\n=== Related Document Context ===\n${ragContext}\n=== End of Context ===`
 
   const messages = [...history, { role: 'user', content: userMessage }]
   return chat(modelId, system, messages, 'chat')

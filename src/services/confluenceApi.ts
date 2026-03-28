@@ -188,12 +188,12 @@ export async function downloadAttachmentAsFile(
   att: ConfluenceAttachmentInfo,
 ): Promise<File> {
   if (att.fileSize > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`파일 크기 초과 (${(att.fileSize / 1024 / 1024).toFixed(1)} MB > 10 MB)`)
+    throw new Error(`File size exceeded (${(att.fileSize / 1024 / 1024).toFixed(1)} MB > 10 MB)`)
   }
 
   const url = `${creds.baseUrl}${att.downloadPath}`
   const res = await fetch(url, { headers: { Authorization: creds.authHeader } })
-  if (!res.ok) throw new Error(`다운로드 실패: ${att.title} (${res.status})`)
+  if (!res.ok) throw new Error(`Download failed: ${att.title} (${res.status})`)
 
   const buffer = await res.arrayBuffer()
   return new File([buffer], att.title, { type: att.mediaType })
@@ -287,7 +287,7 @@ function wrapAsDownloadedHtml(detail: ConfluenceExportPageDetail): string {
 <body>
   <h1>${safeTitle}</h1>
   <div class="meta">
-    생성: ${detail.created} &nbsp;|&nbsp; 수정: ${detail.modified}
+    Created: ${detail.created} &nbsp;|&nbsp; Modified: ${detail.modified}
   </div>
   ${detail.bodyHtml}
 </body>
@@ -305,7 +305,7 @@ export async function buildConfluenceExportPage(
   summary: ConfluenceExportPageSummary,
   onProgress?: (msg: string) => void,
 ): Promise<ConfluenceExportPage> {
-  onProgress?.('페이지 내용 가져오는 중…')
+  onProgress?.('Fetching page content…')
 
   const detail = await fetchPageDetail(creds, summary.id)
   const htmlString = wrapAsDownloadedHtml(detail)
@@ -317,7 +317,7 @@ export async function buildConfluenceExportPage(
     { type: 'text/html' },
   )
 
-  onProgress?.('첨부파일 목록 가져오는 중…')
+  onProgress?.('Fetching attachment list…')
 
   const attInfos = await fetchAttachments(creds, summary.id)
   const docTypes = ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls'] as const
@@ -328,7 +328,7 @@ export async function buildConfluenceExportPage(
 
   const attachments: ConfluenceAttachment[] = []
   for (const attInfo of docAttInfos) {
-    onProgress?.(`첨부파일 다운로드: ${attInfo.title}`)
+    onProgress?.(`Downloading attachment: ${attInfo.title}`)
     try {
       const file = await downloadAttachmentAsFile(creds, attInfo)
       attachments.push({ file, type: getAttachmentType(attInfo.title) })

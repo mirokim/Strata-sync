@@ -112,7 +112,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<void> {
 
     if (!response.ok) {
       const errText = await response.text()
-      throw new Error(`Anthropic API 오류 ${response.status}: ${errText}`)
+      throw new Error(`Anthropic API error ${response.status}: ${errText}`)
     }
 
     const data = await response.json() as {

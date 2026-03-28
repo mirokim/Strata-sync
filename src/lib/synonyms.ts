@@ -1,20 +1,20 @@
 /**
- * 검색 쿼리 동의어·약어 확장 테이블
+ * Search query synonym/abbreviation expansion table
  *
- * 키: 사용자가 입력할 수 있는 표현 (소문자)
- * 값: 볼트 문서에서 실제로 쓰이는 표현
+ * Key: expressions users may type (lowercase)
+ * Value: expressions actually used in vault documents
  *
- * 원칙:
- *  - 단방향 우선 (사용자 표현 → 문서 표현)
- *  - 역방향은 명확히 필요한 경우만 추가
- *  - 너무 짧거나 범용적인 단어(예: '적')는 오탐 가능성 주의
+ * Principles:
+ *  - Unidirectional preferred (user expression → document expression)
+ *  - Add reverse direction only when clearly needed
+ *  - Be careful with short or generic words (e.g., 'enemy') due to false positive risk
  */
 export const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
-  // ── 약어 확장 ──────────────────────────────────────────────────────────────
+  // ── Abbreviation expansion ──────────────────────────────────────────────────
   '배틀로얄':    ['br', 'br모드'],
   'br':          ['배틀로얄', 'br모드'],
 
-  // ── 한국어 → 외래어/게임 용어 ─────────────────────────────────────────────
+  // ── Korean → loanword/game terminology ─────────────────────────────────────
   '음향':        ['사운드'],
   '효과음':      ['사운드'],
   '배경음':      ['bgm', '사운드'],
@@ -22,7 +22,7 @@ export const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
 
   '전용서버':    ['데디케이트'],
   '독립서버':    ['데디케이트'],
-  '데디케이트':  ['전용서버', '클라서버'],  // 역방향
+  '데디케이트':  ['전용서버', '클라서버'],  // reverse
 
   '지도':        ['맵', 'world_map'],
   '세계지도':    ['맵', 'world_map', '월드맵'],
@@ -37,11 +37,11 @@ export const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
   '조합':        ['레시피', '크래프팅'],
   '제작':        ['레시피', '크래프팅'],
 
-  '각성':        ['성장', '강화'],  // 문맥상 마법사 각성 관련
+  '각성':        ['성장', '강화'],  // contextually related to mage awakening
   '눈뜨기':      ['각성'],
 }
 
-/** 토크나이즈된 쿼리 배열에 동의어 확장을 적용한 새 배열 반환 */
+/** Returns a new array with synonym expansion applied to a tokenized query array */
 export function expandTerms(terms: string[]): string[] {
   const expanded = new Set(terms)
   for (const term of terms) {

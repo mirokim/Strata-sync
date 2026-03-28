@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-pptx_to_md.py — Graph RAG 데이터 정제 매뉴얼 v3.8 §4.3 구현
-PPTX → Obsidian 호환 Markdown 변환
+pptx_to_md.py — Graph RAG data refinement manual v3.8 §4.3 implementation
+PPTX → Obsidian-compatible Markdown conversion
 
-사용법:
+Usage:
   python pptx_to_md.py <pptx_path> --active <active_dir> --attachments <att_dir>
   python pptx_to_md.py <pptx_dir>  --active <active_dir> --attachments <att_dir>
 """
@@ -51,7 +51,7 @@ def detect_tags(filename: str) -> list:
 
 
 def shape_to_text(shape) -> str:
-    """Shape에서 텍스트 추출."""
+    """Extract text from Shape."""
     parts = []
 
     # 텍스트프레임
@@ -78,7 +78,7 @@ def shape_to_text(shape) -> str:
 
 
 def extract_slide_images(slide, stem: str, slide_num: int, attachments_dir: Path) -> list:
-    """슬라이드에서 삽입 이미지 추출 → attachments/ 저장."""
+    """Extract embedded images from slide → save to attachments/."""
     image_links = []
     img_counter = 0
 
@@ -99,7 +99,7 @@ def extract_slide_images(slide, stem: str, slide_num: int, attachments_dir: Path
 
 
 def pptx_to_md(pptx_path: Path, active_dir: Path, attachments_dir: Path) -> dict:
-    """단일 PPTX 파일 변환."""
+    """Convert a single PPTX file."""
     stem = sanitize_filename(pptx_path.stem)
     title = pptx_path.stem
     doc_type = detect_type(title)
@@ -110,7 +110,7 @@ def pptx_to_md(pptx_path: Path, active_dir: Path, attachments_dir: Path) -> dict
     except Exception as e:
         return {'file': str(pptx_path), 'status': 'error', 'msg': str(e)}
 
-    # 수정일 추출
+    # Extract modification date
     try:
         mtime = datetime.fromtimestamp(pptx_path.stat().st_mtime).strftime('%Y-%m-%d')
     except Exception:
@@ -120,14 +120,14 @@ def pptx_to_md(pptx_path: Path, active_dir: Path, attachments_dir: Path) -> dict
     total_images = 0
 
     for slide_num, slide in enumerate(prs.slides, 1):
-        # 슬라이드 제목 추출
+        # Extract slide title
         slide_title = ''
         if slide.shapes.title and slide.shapes.title.has_text_frame:
             slide_title = slide.shapes.title.text_frame.text.strip()
 
         heading = f"## 슬라이드 {slide_num}" + (f" — {slide_title}" if slide_title else '')
 
-        # 본문 텍스트 수집 (제목 shape 제외)
+        # Collect body text (excluding title shape)
         body_parts = []
         for shape in slide.shapes:
             if shape == slide.shapes.title:
@@ -136,16 +136,16 @@ def pptx_to_md(pptx_path: Path, active_dir: Path, attachments_dir: Path) -> dict
             if text.strip():
                 body_parts.append(text)
 
-        # 이미지 추출
+        # Extract images
         image_links = extract_slide_images(slide, stem, slide_num, attachments_dir)
         total_images += len(image_links)
 
-        # 발표자 노트
+        # Speaker notes
         notes_text = ''
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
             notes_text = slide.notes_slide.notes_text_frame.text.strip()
 
-        # 슬라이드 MD 조합
+        # Compose slide MD
         slide_md_parts = [heading]
         if body_parts:
             slide_md_parts.append('\n'.join(body_parts))
@@ -206,7 +206,7 @@ def main():
         elif p.suffix.lower() == '.pptx':
             pptx_files.append(p)
 
-    print(f"PPTX {len(pptx_files)}개 변환 시작...")
+    print(f"PPTX {len(pptx_files)}개 변환 starting...")
 
     ok, errors = 0, 0
     for pptx_path in pptx_files:
@@ -218,7 +218,7 @@ def main():
             errors += 1
             print(f"  ✗ {pptx_path.name} — {r.get('msg','')}")
 
-    print(f"\n완료: 성공 {ok}개, 오류 {errors}개")
+    print(f"\nComplete: 성공 {ok}개, 오류 {errors}개")
 
 
 if __name__ == '__main__':

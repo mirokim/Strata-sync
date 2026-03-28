@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-refine_html_to_md.py — Graph RAG 데이터 정제 매뉴얼 v3.8 §4.1 구현
-Confluence HTML 내보내기 → Obsidian 호환 Markdown 변환
-markdownify 기반 고속 변환 (멀티프로세싱 병렬 처리)
+refine_html_to_md.py — Graph RAG data refinement manual v3.8 §4.1 implementation
+Confluence HTML export → Obsidian-compatible Markdown conversion
+markdownify-based high-speed conversion (multiprocessing parallel)
 
-사용법:
+Usage:
   python refine_html_to_md.py <html_dir> [<html_dir2> ...] \
       --active refined_vault/active \
       --attachments refined_vault/attachments
@@ -32,7 +32,7 @@ except ImportError:
     print("ERROR: markdownify 미설치. pip install markdownify --break-system-packages")
     sys.exit(1)
 
-# ── 상수 ─────────────────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'}
 
 TYPE_KEYWORDS = {
@@ -156,7 +156,7 @@ def preprocess_confluence(soup: BeautifulSoup, stem: str,
         else:
             ac_img.decompose()
 
-    # 제거할 macro 이름
+    # Macro names to remove
     REMOVE_MACROS = {'toc', 'change-history', 'recently-updated', 'pagetree',
                      'children', 'excerpt', 'panel-heading'}
 
@@ -191,7 +191,7 @@ def preprocess_confluence(soup: BeautifulSoup, stem: str,
 
 
 def is_stub(md_body: str, threshold: int = 50) -> bool:
-    """§3.1.1 스텁 판단: 실질 본문 글자 수 threshold 미만."""
+    """§3.1.1 Stub determination: actual body character count below threshold."""
     text = md_body
     text = re.sub(r'^---.*?---\s*', '', text, flags=re.DOTALL)
     text = re.sub(r'^# .+\n?', '', text, flags=re.MULTILINE)
@@ -202,19 +202,19 @@ def is_stub(md_body: str, threshold: int = 50) -> bool:
 
 
 def postprocess_md(md: str) -> str:
-    """Markdown 후처리."""
+    """Markdown post-processing."""
     # markdownify가 생성한 img 링크를 Obsidian ![[]] 형식으로 변환
     # ![alt](filename) → ![[filename]]
     md = re.sub(r'!\[[^\]]*\]\(([^)]+)\)', lambda m: f'![[{Path(m.group(1)).name}]]', md)
 
-    # 노이즈 패턴 제거
+    # Remove noise patterns
     for pattern in NOISE_PATTERNS:
         md = re.sub(pattern, '', md, flags=re.IGNORECASE)
 
-    # 연속 빈줄 축소 (4줄 이상 → 2줄)
+    # Reduce consecutive blank lines (4+ → 2)
     md = re.sub(r'\n{4,}', '\n\n\n', md)
 
-    # HTML 잔재 태그 제거
+    # Remove residual HTML tags
     md = re.sub(r'<[^>]+>', '', md)
 
     return md.strip()
@@ -282,7 +282,7 @@ def convert_html(args: tuple) -> dict:
     doc_type = detect_type(fname)
     tags = detect_tags(fname, doc_title)
 
-    # 스텁 판단
+    # Determine stub
     stub = is_stub(md_body)
 
     # Frontmatter
@@ -301,7 +301,7 @@ page_id: "{page_id}"
     source_line = f"\n> 원본: [{doc_title}]({source_url})\n\n" if source_url else ''
     md_content = frontmatter + '\n\n' + f"# {doc_title}\n" + source_line + md_body
 
-    # 스텁은 .archive/로, 정상은 active/로
+    # Stubs go to .archive/, normal to active/
     if stub:
         out_dir = active_dir.parent / '.archive'
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -324,7 +324,7 @@ page_id: "{page_id}"
 
 def main():
     parser = argparse.ArgumentParser(description='Confluence HTML → Obsidian MD (§4.1)')
-    parser.add_argument('html_dirs', nargs='+', help='HTML 폴더(들)')
+    parser.add_argument('html_dirs', nargs='+', help='HTML folder(s)')
     parser.add_argument('--active', default='refined_vault/active')
     parser.add_argument('--attachments', default='refined_vault/attachments')
     parser.add_argument('--workers', type=int, default=None)
@@ -345,11 +345,11 @@ def main():
         print(f"  {d}: {len(found)}개")
         html_files.extend(found)
 
-    print(f"\n총 {len(html_files)}개 변환 시작...")
+    print(f"\n총 {len(html_files)}개 변환 starting...")
     tasks = [(str(p), str(active_dir), str(attachments_dir)) for p in html_files]
 
     workers = args.workers or min(multiprocessing.cpu_count(), 8)
-    print(f"병렬 워커: {workers}")
+    print(f"Parallel workers: {workers}")
 
     with multiprocessing.Pool(workers) as pool:
         results = []
@@ -359,7 +359,7 @@ def main():
                 ok = sum(1 for x in results if x['status'] == 'ok')
                 stub = sum(1 for x in results if x['status'] == 'stub')
                 err = sum(1 for x in results if x['status'] == 'error')
-                print(f"  진행: {i}/{len(tasks)} — ok:{ok} stub:{stub} error:{err}", flush=True)
+                print(f"  Progress: {i}/{len(tasks)} — ok:{ok} stub:{stub} error:{err}", flush=True)
 
     ok_n = sum(1 for r in results if r['status'] == 'ok')
     stub_n = sum(1 for r in results if r['status'] == 'stub')
@@ -367,11 +367,11 @@ def main():
     imgs = sum(r.get('images', 0) for r in results)
     errors = [r for r in results if r['status'] == 'error']
 
-    print(f"\n=== 변환 완료 ===")
+    print(f"\n=== 변환 Complete ===")
     print(f"  active:    {ok_n}개")
     print(f"  .archive:  {stub_n}개 (스텁)")
-    print(f"  오류:      {err_n}개")
-    print(f"  이미지:    {imgs}개")
+    print(f"  Error:      {err_n}개")
+    print(f"  Images:    {imgs}개")
     if errors:
         for r in errors[:5]:
             print(f"  ERROR: {r['file']} — {r['msg']}")

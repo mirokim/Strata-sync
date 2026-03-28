@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-scan_cleanup.py — §3 스텁·구버전 파일 탐지 및 .archive/ 이동
+scan_cleanup.py — §3 Stub/old version file detection and .archive/ move
 
-탐지 항목:
-  S1. 스텁 (실질 본문 50자 미만)  §3.1.1 기준
-  S2. 빈 페이지 (frontmatter만 있거나 실질 내용 없음)
-  S3. status: outdated + superseded_by 없음  §3.3 기준
-  S4. 구버전 파일 (파일명에 v1/old/backup/draft 패턴)
-  S5. 운영성 파일 (회의실 예약·총무 공지·식사 안내 등)  §3.1 기준
+Detection items:
+  S1. Stubs (actual body under 50 chars)  per §3.1.1
+  S2. Empty pages (only frontmatter or no actual content)
+  S3. status: outdated + no superseded_by  per §3.3
+  S4. Old version files (v1/old/backup/draft pattern in filename)
+  S5. Operational files (room booking, admin notices, meal info, etc.)  per §3.1
 
-동작:
-  --dry-run : 탐지만 하고 이동 안 함 (기본)
-  --fix     : .archive/ 폴더로 실제 이동
-  --verbose : 탐지 이유까지 출력
+Behavior:
+  --dry-run : 탐지만 하고 Not moved (기본)
+  --fix     : .archive/ 폴더로 Actual move
+  --verbose : Output detection reasons
 
-사용법:
+Usage:
   python scan_cleanup.py <active_dir> [--archive <archive_dir>] [--fix] [--verbose]
 """
 
@@ -26,7 +26,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 
-# ── 패턴 정의 ───────────────────────────────────────────────────
+# ── Pattern definitions ───────────────────────────────────────────────────
 STUB_CHAR_LIMIT = 50          # 실질 본문 기준 (§3.1.1)
 OLD_VERSION_PATTERNS = re.compile(
     r'(?i)_v0\.\d|_old|_backup|_bak|_copy|_draft(?!\d)|_deprecated'
@@ -38,17 +38,17 @@ OPS_KEYWORDS = [
 
 
 def body_char_count(content: str) -> int:
-    """§3.1.1 기준: frontmatter·H1·원본링크 제거 후 글자 수."""
+    """Per §3.1.1: character count after removing frontmatter, H1, and source links."""
     text = content
-    # frontmatter 제거
+    # Remove frontmatter
     if text.startswith('---'):
         end = text.find('\n---\n', 4)
         text = text[end + 5:] if end != -1 else text
-    # H1 제거
+    # Remove H1
     text = re.sub(r'^#\s+.+', '', text, flags=re.MULTILINE)
-    # 원본 링크 줄 제거 (> 원본: ...)
+    # Remove original link lines (> 원본: ...)
     text = re.sub(r'^>\s*원본\s*:.*', '', text, flags=re.MULTILINE)
-    # wikilink, 마크다운 기호, 공백 제거 후 순수 글자만
+    # Only pure characters after removing wikilinks, markdown symbols, and spaces
     text = re.sub(r'!\[\[[^\]]*\]\]', '', text)     # 이미지 링크 제거
     text = re.sub(r'\[\[([^\]|]+)\|?[^\]]*\]\]', r'\1', text)  # wikilink → 텍스트
     text = re.sub(r'[#\-\*>`\|=_~]', '', text)
@@ -62,14 +62,14 @@ def get_frontmatter_field(content: str, field: str) -> str:
 
 
 def has_image_content(content: str) -> bool:
-    """§3.1.1 주의: 이미지 링크(![[...]]) 또는 테이블이 있으면 실질 콘텐츠로 인정."""
+    """§3.1.1 Note: Image links (![[...]]) or tables count as actual content."""
     has_img   = bool(re.search(r'!\[\[[^\]]+\]\]', content))
     has_table = bool(re.search(r'^\|.+\|', content, re.MULTILINE))
     return has_img or has_table
 
 
 def is_stub(content: str) -> bool:
-    """스텁 판정: 본문 50자 미만 AND 이미지/테이블 없음."""
+    """Stub determination: body under 50 chars AND no images/tables."""
     if has_image_content(content):
         return False   # 이미지·테이블 파일은 스텁으로 판정하지 않음
     return body_char_count(content) < STUB_CHAR_LIMIT
@@ -101,7 +101,7 @@ def scan(active_dir: Path) -> dict[str, list]:
     }
 
     for md in sorted(active_dir.glob('*.md')):
-        # 생성된 허브/인덱스 파일은 제외
+        # Exclude generated hub/index files
         if md.stem in ('_index', 'currentSituation', 'chief persona') or \
            md.stem.startswith('회의록_') or md.stem.startswith('_index_') or \
            md.stem.startswith('_tech_'):
@@ -137,7 +137,7 @@ def move_to_archive(files: list, archive_dir: Path, reason: str) -> int:
 
 def print_report(results: dict, fix: bool, verbose: bool, moved: dict):
     print(f"\n{'='*55}")
-    print(f"§3 scan_cleanup 완료  ({'실제 이동' if fix else 'DRY-RUN'})")
+    print(f"§3 scan_cleanup Complete  ({'Actual move' if fix else 'DRY-RUN'})")
     print(f"{'='*55}")
 
     categories = [
@@ -153,7 +153,7 @@ def print_report(results: dict, fix: bool, verbose: bool, moved: dict):
         n = len(files)
         total_detected += n
         mv = moved.get(key, 0)
-        status = f"→ {mv}개 이동" if fix and mv else ("→ 이동 안 함" if fix else "→ dry-run")
+        status = f"→ {mv}개 이동" if fix and mv else ("→ Not moved" if fix else "→ dry-run")
         print(f"\n  {label}: {n}개  {status}")
         if verbose or not fix:
             for f in files[:15]:
@@ -164,28 +164,28 @@ def print_report(results: dict, fix: bool, verbose: bool, moved: dict):
             if len(files) > 15:
                 print(f"    ... 외 {len(files)-15}개")
 
-    print(f"\n  총 탐지: {total_detected}개")
+    print(f"\n  Total detected: {total_detected}개")
     if not fix:
-        print("  ⚠️  실제 이동하려면 --fix 옵션을 추가하세요.")
+        print("  ⚠️  Actual move하려면 --fix 옵션을 추가하세요.")
 
 
 def main():
     parser = argparse.ArgumentParser(description='§3 스텁·구버전 파일 탐지 및 .archive/ 이동')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
+    parser.add_argument('active_dir', help='active/ folder path')
     parser.add_argument('--archive', help='.archive/ 폴더 경로 (기본: active/../.archive)')
-    parser.add_argument('--fix', action='store_true', help='실제 .archive/ 이동 실행')
-    parser.add_argument('--verbose', '-v', action='store_true', help='탐지 파일 목록 상세 출력')
+    parser.add_argument('--fix', action='store_true', help='Execute actual move to .archive/')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Detailed output of detected files')
     parser.add_argument('--category', choices=['stub', 'outdated', 'old_version', 'ops'],
-                        help='특정 카테고리만 이동 (--fix 와 함께 사용)')
+                        help='Move only specific category (use with --fix)')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 없음"); sys.exit(1)
+        print(f"Error: {active_dir} not found"); sys.exit(1)
 
     archive_dir = Path(args.archive) if args.archive else active_dir.parent / '.archive'
 
-    print(f"§3 scan_cleanup 시작...")
+    print(f"§3 scan_cleanup starting...")
     print(f"  대상: {active_dir}")
     print(f"  archive: {archive_dir}")
 

@@ -1,7 +1,7 @@
 """
-web_search.py — DuckDuckGo HTML 검색 (API 키 불필요)
+web_search.py — DuckDuckGo HTML search (no API key required)
 
-vault 검색 결과를 보강하거나, 볼트에 없는 최신 정보 조회에 사용.
+Used to augment vault search results or look up latest info not in the vault.
 """
 import html
 import re
@@ -15,9 +15,9 @@ _TIMEOUT = 10
 
 def search_web(query: str, max_results: int = 5) -> list[dict]:
     """
-    DuckDuckGo에서 검색, 상위 max_results개 결과 반환.
-    결과: [{"title": str, "url": str, "snippet": str}]
-    실패 시 [] 반환.
+    Search DuckDuckGo and return top max_results results.
+    Results: [{"title": str, "url": str, "snippet": str}]
+    Returns [] on failure.
     """
     params = urllib.parse.urlencode({"q": query, "kl": "kr-kr"})
     req = urllib.request.Request(
@@ -38,7 +38,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
 
     results = []
 
-    # 결과 블록: <a class="result__a"> 제목 + URL + <a class="result__snippet"> 요약
+    # Result blocks: <a class="result__a"> title + URL + <a class="result__snippet"> snippet
     title_url_re = re.compile(
         r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', re.DOTALL
     )
@@ -53,7 +53,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
         clean_title = html.unescape(re.sub(r"<[^>]+>", "", raw_title)).strip()
         raw_snip = snippets[i] if i < len(snippets) else ""
         clean_snip = html.unescape(re.sub(r"<[^>]+>", "", raw_snip)).strip()
-        # DuckDuckGo redirect URL 정리
+        # Clean up DuckDuckGo redirect URL
         if url.startswith("//duckduckgo.com/l/?"):
             m = re.search(r"uddg=([^&]+)", url)
             if m:
@@ -65,13 +65,13 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
 
 
 def build_web_context(results: list[dict], max_chars: int = 2000) -> str:
-    """검색 결과를 RAG 컨텍스트 문자열로 변환."""
+    """Convert search results to a RAG context string."""
     if not results:
         return ""
-    parts = ["## 웹 검색 결과\n"]
+    parts = ["## Web Search Results\n"]
     total = len(parts[0])
     for r in results:
-        chunk = f"- **{r['title']}**\n  {r['snippet']}\n  출처: {r['url']}\n\n"
+        chunk = f"- **{r['title']}**\n  {r['snippet']}\n  Source: {r['url']}\n\n"
         if total + len(chunk) > max_chars:
             break
         parts.append(chunk)

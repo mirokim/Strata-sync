@@ -1,8 +1,8 @@
 """
-tests/test_rag_electron.py — rag_electron.py 유닛 테스트
+tests/test_rag_electron.py — rag_electron.py unit tests
 
-실행: python -m pytest bot/tests/ -v
-(또는 bot/ 디렉토리에서 python -m pytest tests/ -v)
+Run: python -m pytest bot/tests/ -v
+(or from the bot/ directory: python -m pytest tests/ -v)
 """
 import json
 import sys
@@ -31,7 +31,7 @@ def _make_response(data: object, status: int = 200) -> MagicMock:
 
 class TestGetElectronSettings(unittest.TestCase):
     def setUp(self):
-        # 각 테스트 전 캐시 초기화
+        # Reset cache before each test
         rag._cached_settings = None
         rag._settings_fetched_at = 0.0
 
@@ -60,19 +60,19 @@ class TestGetElectronSettings(unittest.TestCase):
         responses = [_make_response(payload1), _make_response(payload2)]
         with patch("urllib.request.urlopen", side_effect=responses):
             r1 = rag.get_electron_settings()
-            # TTL 만료 시뮬레이션
+            # Simulate TTL expiration
             rag._settings_fetched_at -= rag._SETTINGS_TTL + 1
             r2 = rag.get_electron_settings()
         self.assertEqual(r1["personaModels"]["chief_director"], "model-a")
         self.assertEqual(r2["personaModels"]["chief_director"], "model-b")
 
     def test_stale_cache_returned_on_failure(self):
-        """Electron 재시작 전 실패 시 만료 캐시라도 반환."""
+        """Return stale cache on failure before Electron restart."""
         import urllib.error
         payload = {"personaModels": {"chief_director": "model-a"}}
         with patch("urllib.request.urlopen", return_value=_make_response(payload)):
             rag.get_electron_settings()
-        # TTL 만료 후 재요청 실패
+        # Failure after TTL expiration
         rag._settings_fetched_at -= rag._SETTINGS_TTL + 1
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
             result = rag.get_electron_settings()
@@ -117,12 +117,12 @@ class TestGetModelForTag(unittest.TestCase):
     def test_fallback_for_unknown_tag(self):
         settings = {"personaModels": {"chief_director": "claude-opus-4-6"}}
         with patch.object(rag, "get_electron_settings", return_value=settings):
-            # 알 수 없는 태그 → chief_director로 폴백
+            # Unknown tag → falls back to chief_director
             model = rag.get_model_for_tag("unknown_tag")
         self.assertEqual(model, "claude-opus-4-6")
 
     def test_fallback_when_model_key_missing(self):
-        # personaModels가 비어있는 경우
+        # When personaModels is empty
         settings = {"personaModels": {}}
         with patch.object(rag, "get_electron_settings", return_value=settings):
             model = rag.get_model_for_tag("chief", fallback="my-fallback")
@@ -164,7 +164,7 @@ class TestSearchViaElectron(unittest.TestCase):
 
 
 class TestAskViaElectron(unittest.TestCase):
-    """ask_via_electron은 (answer, image_paths) 튜플을 반환."""
+    """ask_via_electron returns an (answer, image_paths) tuple."""
 
     def test_returns_answer_and_empty_paths_on_success(self):
         payload = {"answer": "이것은 테스트 답변입니다."}
@@ -188,7 +188,7 @@ class TestAskViaElectron(unittest.TestCase):
         self.assertEqual(paths, [])
 
     def test_tag_mapped_to_correct_director(self):
-        """POST body에 director=art_director 포함 확인."""
+        """Verify POST body contains director=art_director."""
         payload = {"answer": "답변"}
         captured_bodies = []
 
@@ -203,7 +203,7 @@ class TestAskViaElectron(unittest.TestCase):
         self.assertTrue(any(b.get("director") == "art_director" for b in captured_bodies))
 
     def test_spec_tag_mapped_to_plan_director(self):
-        """POST body에 director=plan_director 포함 확인."""
+        """Verify POST body contains director=plan_director."""
         payload = {"answer": "답변"}
         captured_bodies = []
 
@@ -218,7 +218,7 @@ class TestAskViaElectron(unittest.TestCase):
         self.assertTrue(any(b.get("director") == "plan_director" for b in captured_bodies))
 
     def test_history_included_in_post_body(self):
-        """history가 POST body에 포함되어 전송되는지 확인."""
+        """Verify history is included in the POST body."""
         payload = {"answer": "답변"}
         captured_bodies = []
 
@@ -235,7 +235,7 @@ class TestAskViaElectron(unittest.TestCase):
         self.assertEqual(captured_bodies[0]["history"], history)
 
     def test_no_history_key_when_empty(self):
-        """history가 없으면 POST body에 history 키가 없어야 함."""
+        """When history is empty, POST body should not contain history key."""
         payload = {"answer": "답변"}
         captured_bodies = []
 
@@ -268,7 +268,7 @@ class TestAskViaElectron(unittest.TestCase):
 
 
 class TestGetImagesViaElectron(unittest.TestCase):
-    """get_images_via_electron — /images 엔드포인트 클라이언트."""
+    """get_images_via_electron — /images endpoint client."""
 
     def test_returns_paths_on_success(self):
         payload = {"paths": ["/vault/img/art.png", "/vault/img/ref.jpg"]}

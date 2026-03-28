@@ -1,5 +1,5 @@
 """
-keyword_store.py — keyword_index.json CRUD
+keyword_store.py — keyword_index.json CRUD operations
 """
 import json
 from datetime import datetime

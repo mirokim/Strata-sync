@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-strengthen_links.py — §8 Wiki링크 2차 강화
+strengthen_links.py — §8 Wikilink secondary enhancement
 
-8.1 깨진 브래킷 수정   — [[[stem]]] → [[stem]] 패턴 정규화
-8.2 도메인 허브 링크   — ENTITY_HUB 기반 본문 내 엔티티명 → 허브 링크 (inject_keywords와 연동)
-8.3 Ghost→Real 교체   — 파일 없는 [[broken_stem]] → 실제 stem prefix 매칭으로 자동 교체
-8.4 태그 Fallback 링크 — 위 모든 단계 후에도 링크 없는 파일 → TAG_HUB 강제 주입
-8.5 Archive Dead Link — .archive/ 이동된 파일 참조 링크 active에서 제거
+8.1 Fix broken brackets   — [[[stem]]] → [[stem]] pattern normalization
+8.2 Domain hub links       — Inject hub links for entity names in body text based on ENTITY_HUB (linked with inject_keywords)
+8.3 Ghost→Real replacement — Replace missing [[broken_stem]] → auto-replace via stem prefix matching
+8.4 Tag fallback links     — Force inject TAG_HUB links for files with no links after all above steps
+8.5 Archive dead links     — Remove links to .archive/-moved files from active
 
-사용법:
+Usage:
   python strengthen_links.py <active_dir> [--archive <archive_dir>] [--verbose]
 """
 
@@ -19,19 +19,19 @@ from pathlib import Path
 from collections import Counter, defaultdict
 
 
-# ── §8.2 도메인 허브 맵 ──────────────────────────────────────────────
-# 본문 텍스트에 해당 키워드가 있으면 허브 링크 주입
-# (inject_keywords.py 에서 이미 처리된 것과 겹치지 않게, 더 짧은 alias 위주)
+# ── §8.2 Domain hub map ──────────────────────────────────────────────
+# Inject hub link when keyword is found in body text
+# (shorter aliases that don't overlap with inject_keywords.py)
 ENTITY_HUB: dict[str, str] = {
-    # 캐릭터 단축 alias (inject_keywords에 없는 것)
+    # Character short aliases (not in inject_keywords)
     "캐릭터G 쇼군":    "416014685_06_ 캐릭터 _ 캐릭터G",
     "캐릭터J 블레이드": "584041454_14_ 캐릭터 _ 캐릭터J 블레이드",
-    # 시스템 단축
+    # System shortcuts
     "점령전 테스트":   "681184425_점령전 테스트_2026_03_11",
     "난투전 테스트":   "642329459_난투전 테스트_2025_12_16",
 }
 
-# ── §8.4 태그 기반 Fallback 허브 ─────────────────────────────────────
+# ── §8.4 Tag-based fallback hub ───────────────────────────────────────
 TAG_HUB: dict[str, str] = {
     'chief':     'chief persona',
     'meeting':   'chief persona',
@@ -47,7 +47,7 @@ TAG_HUB: dict[str, str] = {
     'data':      '_index',
 }
 
-# 허브 링크 삽입 위치 (## 개요 섹션 직전)
+# Hub link insertion position (before ## Overview section)
 RELATED_SECTION = '## 관련 문서'
 
 
@@ -67,7 +67,7 @@ def get_tags(fm: str) -> list[str]:
 
 
 def protect_links(body: str) -> tuple[str, dict]:
-    """기존 [[...]] 를 placeholder로 치환."""
+    """Replace existing [[...]] with placeholders."""
     placeholders = {}
     counter = [0]
     def repl(m):
@@ -85,20 +85,20 @@ def restore_links(body_p: str, placeholders: dict) -> str:
     return body_p
 
 
-# ── §8.1: 깨진 브래킷 정규화 ──────────────────────────────────────────
+# ── §8.1: Broken bracket normalization ────────────────────────────────
 def fix_broken_brackets(content: str) -> tuple[str, int]:
-    """[[[stem]]] → [[stem]] 수정. (new_content, count) 반환."""
-    # 4중 이상 대괄호만 수정 (3중은 [날짜] 접두사 패턴으로 유효)
+    """Fix [[[stem]]] → [[stem]]. Returns (new_content, count)."""
+    # Only fix 4+ brackets (triple brackets are valid as [date] prefix patterns)
     new, n = re.subn(r'\[\[\[\[([^\[\]]+)\]\]', r'[[\1]]', content)
     return new, n
 
 
-# ── §8.3: Ghost→Real prefix 매칭 ─────────────────────────────────────
+# ── §8.3: Ghost→Real prefix matching ─────────────────────────────────
 def build_prefix_map(all_stems: set) -> dict:
-    """stem → 실제 stem 매핑 (prefix 기반 빠른 조회용)."""
+    """stem → real stem mapping (for fast prefix-based lookup)."""
     prefix_map = {}
     for stem in all_stems:
-        # 숫자ID_ 제거한 형태도 prefix로 등록
+        # Also register the form with numeric ID_ prefix removed
         clean = re.sub(r'^\d+_', '', stem)
         if clean and clean != stem:
             if clean not in prefix_map:
@@ -107,18 +107,18 @@ def build_prefix_map(all_stems: set) -> dict:
 
 
 def fix_ghost_links(content: str, all_stems: set, prefix_map: dict) -> tuple[str, int]:
-    """파일 없는 [[stem]] → prefix 매칭으로 실제 stem 교체."""
+    """Replace missing [[stem]] → real stem via prefix matching."""
     fixed = 0
     def repl(m):
         nonlocal fixed
         inner = m.group(1)
         stem = inner.split('|')[0].strip()
         if stem.startswith('[') or stem in all_stems:
-            return m.group(0)  # 정상 링크
-        # prefix 매칭
+            return m.group(0)  # Valid link
+        # Prefix matching
         candidates = [s for s in all_stems if s.startswith(stem) or stem.startswith(s)]
         if not candidates:
-            # prefix_map에서 clean stem 조회
+            # Look up clean stem in prefix_map
             real = prefix_map.get(stem)
             if real:
                 fixed += 1
@@ -135,9 +135,9 @@ def fix_ghost_links(content: str, all_stems: set, prefix_map: dict) -> tuple[str
     return new, fixed
 
 
-# ── §8.5: Archive Dead Link 제거 ─────────────────────────────────────
+# ── §8.5: Archive dead link removal ──────────────────────────────────
 def remove_archive_links(content: str, archive_stems: set, active_stems: set) -> tuple[str, int]:
-    """archive/ 로 이동된 파일의 링크를 active에서 제거."""
+    """Remove links to files moved to archive/ from active."""
     removed = 0
     lines = content.split('\n')
     new_lines = []
@@ -147,9 +147,9 @@ def remove_archive_links(content: str, archive_stems: set, active_stems: set) ->
                 if l.split('|')[0].strip() in archive_stems
                 and l.split('|')[0].strip() not in active_stems]
         if dead:
-            # 링크 줄 자체를 제거 (## 관련 문서 섹션 내)
+            # Remove the link line itself (within ## Related Documents section)
             removed += len(dead)
-            # 링크를 plain text로 변환하거나 줄 제거
+            # Convert links to plain text or remove lines
             new_line = re.sub(r'(?<!!)\[\[([^\]]+)\]\]',
                               lambda m: m.group(0) if m.group(1).split('|')[0].strip() not in dead else '',
                               line)
@@ -160,9 +160,9 @@ def remove_archive_links(content: str, archive_stems: set, active_stems: set) ->
     return '\n'.join(new_lines), removed
 
 
-# ── §8.4: 태그 기반 Fallback ─────────────────────────────────────────
+# ── §8.4: Tag-based fallback ─────────────────────────────────────────
 def inject_fallback(content: str, fm: str, all_stems: set) -> tuple[str, bool]:
-    """링크 없는 파일에 TAG_HUB 링크 강제 주입."""
+    """Force inject TAG_HUB links for files with no links."""
     fm_part, body = split_frontmatter(content)
     existing_links = re.findall(r'\[\[[^\]]+\]\]', body)
     if existing_links:
@@ -183,7 +183,7 @@ def inject_fallback(content: str, fm: str, all_stems: set) -> tuple[str, bool]:
     if not hub_stem:
         return content, False
 
-    # ## 관련 문서 섹션이 없으면 끝에 추가
+    # If no ## Related Documents section exists, append at end
     if RELATED_SECTION not in body:
         body = body.rstrip() + f'\n\n{RELATED_SECTION}\n\n- [[{hub_stem}]]\n'
     else:
@@ -196,13 +196,13 @@ def inject_fallback(content: str, fm: str, all_stems: set) -> tuple[str, bool]:
     return fm_part + body, True
 
 
-# ── §8.2: ENTITY_HUB 링크 주입 ───────────────────────────────────────
+# ── §8.2: ENTITY_HUB link injection ──────────────────────────────────
 def inject_entity_hub(content: str, stem: str, all_stems: set) -> tuple[str, int]:
-    """ENTITY_HUB 키워드가 본문에 등장하면 허브 링크 주입 (첫 1회).
-    inject_keywords.py 와 동일한 placeholder 방식 사용."""
+    """Inject hub link when ENTITY_HUB keyword appears in body (first occurrence only).
+    Uses the same placeholder approach as inject_keywords.py."""
     fm, body = split_frontmatter(content)
 
-    # 코드블록 보호
+    # Protect code blocks
     code_ph: dict[str, str] = {}
     cc = [0]
     def prot_code(m: re.Match) -> str:
@@ -212,10 +212,10 @@ def inject_entity_hub(content: str, stem: str, all_stems: set) -> tuple[str, int
         return k
     body_p = re.sub(r'```[\s\S]*?```|`[^`]+`', prot_code, body, flags=re.DOTALL)
 
-    # 기존 wikilink 보호
+    # Protect existing wikilinks
     body_p, link_ph = protect_links(body_p)
 
-    # 각 키워드 첫 등장 위치 수집 (겹침 제거 후 역순 치환)
+    # Collect first occurrence position for each keyword (deduplicate overlaps, reverse substitute)
     replacements: list[tuple[int, int, str]] = []
     for keyword, target_stem in ENTITY_HUB.items():
         if target_stem == stem or target_stem not in all_stems:
@@ -226,7 +226,7 @@ def inject_entity_hub(content: str, stem: str, all_stems: set) -> tuple[str, int
         if m:
             replacements.append((m.start(), m.end(), f'[[{target_stem}|{keyword}]]'))
 
-    # 위치 오름차순 정렬 후 겹침 제거
+    # Sort by position ascending and remove overlaps
     replacements.sort(key=lambda x: x[0])
     filtered: list[tuple[int, int, str]] = []
     last_end = -1
@@ -235,11 +235,11 @@ def inject_entity_hub(content: str, stem: str, all_stems: set) -> tuple[str, int
             filtered.append((start, end, rep))
             last_end = end
 
-    # 역순 치환 (앞 오프셋 유지)
+    # Reverse substitution (preserves preceding offsets)
     for start, end, rep in reversed(filtered):
         body_p = body_p[:start] + rep + body_p[end:]
 
-    # 복원
+    # Restore
     body_p = restore_links(body_p, link_ph)
     for k, v in code_ph.items():
         body_p = body_p.replace(k, v)
@@ -247,7 +247,7 @@ def inject_entity_hub(content: str, stem: str, all_stems: set) -> tuple[str, int
     return fm + body_p, len(filtered)
 
 
-# ── 메인 ─────────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────────────────
 def strengthen(active_dir: Path, archive_dir: Path | None = None, verbose: bool = False) -> dict:
     all_stems = {md.stem for md in active_dir.glob('*.md')}
     archive_stems = set()
@@ -274,13 +274,13 @@ def strengthen(active_dir: Path, archive_dir: Path | None = None, verbose: bool 
         fm, body = split_frontmatter(content)
         changed = False
 
-        # §8.1 깨진 브래킷
+        # §8.1 Broken brackets
         content, n = fix_broken_brackets(content)
         stats['bracket_fixed'] += n
         if n:
             changed = True
 
-        # §8.2 ENTITY_HUB 링크 주입
+        # §8.2 ENTITY_HUB link injection
         content, n = inject_entity_hub(content, md.stem, all_stems)
         stats['entity_injected'] += n
         if n:
@@ -293,7 +293,7 @@ def strengthen(active_dir: Path, archive_dir: Path | None = None, verbose: bool 
             if n:
                 changed = True
 
-        # §8.3 Ghost→Real (현재 ghost가 없으면 빠르게 통과)
+        # §8.3 Ghost→Real (fast pass-through if no ghosts exist)
         content, n = fix_ghost_links(content, all_stems, prefix_map)
         stats['ghost_fixed'] += n
         if n:
@@ -309,15 +309,15 @@ def strengthen(active_dir: Path, archive_dir: Path | None = None, verbose: bool 
             md.write_text(content, encoding='utf-8')
             stats['files_changed'] += 1
             if verbose:
-                print(f"  수정: {md.name[:60]}")
+                print(f"  Modified: {md.name[:60]}")
 
     return stats
 
 
 def main():
-    parser = argparse.ArgumentParser(description='§8 Wiki링크 2차 강화')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
-    parser.add_argument('--archive', default=None, help='.archive/ 폴더 경로')
+    parser = argparse.ArgumentParser(description='§8 Wikilink secondary enhancement')
+    parser.add_argument('active_dir', help='active/ folder path')
+    parser.add_argument('--archive', default=None, help='.archive/ folder path')
     parser.add_argument('--verbose', '-v', action='store_true')
     args = parser.parse_args()
 
@@ -325,19 +325,19 @@ def main():
     archive_dir = Path(args.archive) if args.archive else None
 
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 없음")
+        print(f"Error: {active_dir} not found")
         sys.exit(1)
 
-    print("§8 Wiki링크 2차 강화 시작...")
+    print("§8 Wikilink secondary enhancement starting...")
     stats = strengthen(active_dir, archive_dir, verbose=args.verbose)
 
-    print(f"\n=== §8 완료 ===")
-    print(f"  8.1 브래킷 수정:      {stats['bracket_fixed']}건")
-    print(f"  8.2 엔티티 허브 주입: {stats['entity_injected']}건")
-    print(f"  8.3 Ghost→Real:      {stats['ghost_fixed']}건")
-    print(f"  8.5 Archive Dead:    {stats['archive_dead']}건")
-    print(f"  8.4 Fallback 주입:   {stats['fallback_injected']}개 파일")
-    print(f"  총 변경 파일:        {stats['files_changed']}개")
+    print(f"\n=== §8 Complete ===")
+    print(f"  8.1 Bracket fixes:       {stats['bracket_fixed']} items")
+    print(f"  8.2 Entity hub injected: {stats['entity_injected']} items")
+    print(f"  8.3 Ghost→Real:          {stats['ghost_fixed']} items")
+    print(f"  8.5 Archive Dead:        {stats['archive_dead']} items")
+    print(f"  8.4 Fallback injected:   {stats['fallback_injected']} files")
+    print(f"  Total changed files:     {stats['files_changed']} files")
 
 
 if __name__ == '__main__':

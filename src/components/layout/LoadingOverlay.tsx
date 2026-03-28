@@ -9,9 +9,9 @@ const SATELLITES = [0, 60, 120, 180, 240, 300].map((deg, i) => {
 })
 
 const QUALITY_OPTIONS: { value: ParagraphRenderQuality; label: string; desc: string }[] = [
-  { value: 'high',   label: '최고',  desc: '마크다운 + 위키링크 렌더링' },
-  { value: 'medium', label: '중간',  desc: '마크다운만 렌더링' },
-  { value: 'fast',   label: '빠름',  desc: '일반 텍스트 (가장 빠름)' },
+  { value: 'high',   label: 'High',   desc: 'Markdown + WikiLink rendering' },
+  { value: 'medium', label: 'Medium', desc: 'Markdown only rendering' },
+  { value: 'fast',   label: 'Fast',   desc: 'Plain text (fastest)' },
 ]
 
 function shouldShowPerfSelector(fileCount: number | null, quality: ParagraphRenderQuality): boolean {
@@ -176,7 +176,7 @@ export default function LoadingOverlay() {
                 fontSize: 10, fontWeight: 700, letterSpacing: '0.07em',
                 textTransform: 'uppercase', color: 'var(--color-text-muted)',
               }}>
-                볼트 준비 현황
+                Vault Ready Status
               </span>
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
                 {readyCount} / {vaultEntries.length}
@@ -227,9 +227,9 @@ export default function LoadingOverlay() {
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>
                     {isCurrentlyLoading ? `${loadingProgress}%`
-                      : isBgLoadingThis ? '인덱싱 중...'
-                      : isDone ? `${docCount}개`
-                      : '대기 중'}
+                      : isBgLoadingThis ? 'Indexing...'
+                      : isDone ? `${docCount} docs`
+                      : 'Waiting'}
                   </span>
                 </div>
               )
@@ -267,8 +267,8 @@ export default function LoadingOverlay() {
         }}>
           <span>
             {isBgLoading
-              ? `백그라운드 인덱싱 중... (${bgLoadingInfo!.done + 1}/${bgLoadingInfo!.total})`
-              : (loadingPhase || '볼트 로딩 중...')}
+              ? `Background indexing... (${bgLoadingInfo!.done + 1}/${bgLoadingInfo!.total})`
+              : (loadingPhase || 'Loading vault...')}
           </span>
           {!isBgLoading && loadingProgress > 0 && <span>{loadingProgress}%</span>}
         </div>
@@ -281,7 +281,7 @@ export default function LoadingOverlay() {
             border: '1px solid var(--color-border)', borderRadius: 4,
           }}>
             <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginBottom: 8, letterSpacing: '0.05em' }}>
-              {displayFileCount}개 파일 감지됨 — 렌더링 품질 선택
+              {displayFileCount} files detected — select rendering quality
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {QUALITY_OPTIONS.map(({ value, label, desc }) => {
@@ -308,7 +308,7 @@ export default function LoadingOverlay() {
                 color: 'var(--color-accent, #60a5fa)', fontSize: 12, fontWeight: 600,
                 cursor: 'pointer', letterSpacing: '0.04em',
               }}>
-                시작
+                Start
               </button>
             )}
           </div>

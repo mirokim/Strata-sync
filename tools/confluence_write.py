@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-confluence_write.py — Confluence 페이지 생성/수정 (Markdown → Storage XML)
+confluence_write.py — Confluence page create/update (Markdown → Storage XML)
 
-사용법:
+Usage:
   # 새 페이지 생성
   python confluence_write.py create "페이지 제목" content.md
   python confluence_write.py create "페이지 제목" content.md --space SGEPJA --parent 123456
@@ -13,7 +13,7 @@ confluence_write.py — Confluence 페이지 생성/수정 (Markdown → Storage
   # stdin 에서 읽기
   echo "# 제목\n내용" | python confluence_write.py create "페이지 제목" -
 
-설정:
+Config:
   mcp-config.json 의 confluence 섹션을 읽습니다.
   spaceKey, targetFolder(parentId) 기본값으로 사용됩니다.
 """
@@ -32,7 +32,7 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# ── 설정 로드 ────────────────────────────────────────────────────────────────
+# ── Configuration 로드 ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / 'mcp-config.json'
 
@@ -41,7 +41,7 @@ def load_config() -> dict:
         cfg = json.load(f)
     return cfg.get('confluence', {})
 
-# ── HTTP 헬퍼 ────────────────────────────────────────────────────────────────
+# ── HTTP helpers ────────────────────────────────────────────────────────────────
 def make_ssl_ctx(cfg: dict) -> ssl.SSLContext:
     ctx = ssl.create_default_context()
     if cfg.get('bypassSSL', False):
@@ -202,7 +202,7 @@ def update_page(cfg: dict, page_id: str, title: str,
     }
     return cf_request(cfg, f'/rest/api/content/{page_id}', method='PUT', body=body)
 
-# ── 메인 ────────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description='Confluence 페이지 생성/수정')
     sub = parser.add_subparsers(dest='cmd', required=True)
@@ -240,23 +240,23 @@ def main():
         if result:
             page_id = result.get('id', '?')
             url = cfg['baseUrl'].rstrip('/') + result.get('_links', {}).get('webui', '')
-            print(f'[OK] 생성 완료 — pageId={page_id}')
+            print(f'[OK] 생성 Complete — pageId={page_id}')
             if url:
                 print(f'     URL: {url}')
         else:
-            print('[ERROR] 생성 실패', file=sys.stderr)
+            print('[ERROR] Creation failed', file=sys.stderr)
             sys.exit(1)
 
     elif args.cmd == 'update':
         info = get_page_info(cfg, args.page_id)
         if not info:
-            print('[ERROR] 페이지 정보 조회 실패', file=sys.stderr)
+            print('[ERROR] Failed to retrieve page info', file=sys.stderr)
             sys.exit(1)
         result = update_page(cfg, args.page_id, args.title, storage, info['version'])
         if result:
-            print(f'[OK] 수정 완료 — pageId={args.page_id}, version={info["version"] + 1}')
+            print(f'[OK] 수정 Complete — pageId={args.page_id}, version={info["version"] + 1}')
         else:
-            print('[ERROR] 수정 실패', file=sys.stderr)
+            print('[ERROR] Update failed', file=sys.stderr)
             sys.exit(1)
 
 if __name__ == '__main__':

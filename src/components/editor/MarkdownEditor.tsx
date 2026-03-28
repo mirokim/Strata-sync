@@ -1,12 +1,12 @@
 /**
- * MarkdownEditor — CodeMirror 6 기반 볼트 파일 편집기
+ * MarkdownEditor — CodeMirror 6 based vault file editor
  *
- * [[WikiLink]] WYSIWYG: 커서가 없는 줄에서는 렌더링된 링크로 표시.
- * 커서가 있는 줄에서는 원시 [[...]] 문법이 보임 (Obsidian 스타일).
- * [[ 입력 시 자동완성: React portal 드롭다운으로 정확한 위치 표시.
+ * [[WikiLink]] WYSIWYG: shows rendered links on lines without cursor.
+ * Lines with cursor show raw [[...]] syntax (Obsidian-style).
+ * [[ triggers autocomplete: React portal dropdown at exact position.
  *
- * Lock = 편집 권한 잠금 (read-only). 나중에 다중 사용자 권한 제어에 사용.
- * Auto-save 3s debounce + Ctrl+S. 저장 시 wikiLinks가 변경되면 그래프 재빌드.
+ * Lock = edit permission lock (read-only). Used for multi-user permission control later.
+ * Auto-save 3s debounce + Ctrl+S. Rebuilds graph when wikiLinks change on save.
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react'
@@ -43,7 +43,7 @@ import {
 
 const AUTOSAVE_DELAY = 3000
 
-// YAML frontmatter의 tags 필드를 업데이트한 전체 문자열을 반환한다.
+// Returns the full string with YAML frontmatter tags field updated.
 function updateFrontmatterTags(rawContent: string, newTags: string[]): string {
   const trimmed = rawContent.trimStart()
   if (!trimmed.startsWith('---')) {
@@ -60,12 +60,12 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 interface DocInfo { name: string; folder: string }
 
-// ── WikiLink Suggest 드롭다운 (React portal) ──────────────────────────────────
+// ── WikiLink Suggest dropdown (React portal) ──────────────────────────────────
 
 interface WikiSuggestState {
   query: string
-  from: number   // editor 내 [[ 다음 위치
-  to: number     // 현재 커서 위치
+  from: number   // Position after [[ in editor
+  to: number     // Current cursor position
   rect: { top: number; bottom: number; left: number }
   selectedIdx: number
 }
@@ -80,7 +80,7 @@ interface SuggestDropdownProps {
 function SuggestDropdown({ docs, selectedIdx, rect, onSelect }: SuggestDropdownProps) {
   const listRef = useRef<HTMLDivElement>(null)
 
-  // 선택된 항목이 보이도록 스크롤
+  // Scroll to keep selected item visible
   useEffect(() => {
     const list = listRef.current
     if (!list) return
@@ -112,7 +112,7 @@ function SuggestDropdown({ docs, selectedIdx, rect, onSelect }: SuggestDropdownP
         <div
           key={name}
           onMouseDown={(e) => {
-            e.preventDefault() // 에디터 포커스 유지
+            e.preventDefault() // Keep editor focus
             onSelect(name)
           }}
           style={{
@@ -185,7 +185,7 @@ export default function MarkdownEditor() {
   const viewRef = useRef<EditorView | null>(null)
   const readOnlyCompartment = useRef(new Compartment())
 
-  // 자동완성용 문서 목록 (항상 최신값)
+  // Document list for autocomplete (always up to date)
   const docInfoRef = useRef<DocInfo[]>([])
   docInfoRef.current = loadedDocuments?.map(d => ({
     name: d.filename.replace(/\.md$/i, ''),
@@ -207,7 +207,7 @@ export default function MarkdownEditor() {
   const wikiSuggestRef = useRef(wikiSuggest)
   wikiSuggestRef.current = wikiSuggest
 
-  // 현재 query 기준 필터링된 문서 목록 (렌더마다 재계산)
+  // Filtered document list based on current query (recalculated per render)
   const filteredDocs = wikiSuggest
     ? docInfoRef.current.filter(d => {
         const q = wikiSuggest.query.toLowerCase()
@@ -218,7 +218,7 @@ export default function MarkdownEditor() {
     ? Math.min(wikiSuggest?.selectedIdx ?? 0, filteredDocs.length - 1)
     : 0
 
-  // ── 이름 변경 ─────────────────────────────────────────────────────────────
+  // ── Rename ─────────────────────────────────────────────────────────────
 
   const startRename = useCallback(() => {
     if (!canSave) return
@@ -231,7 +231,7 @@ export default function MarkdownEditor() {
   }, [canSave])
 
   const commitRename = useCallback(async () => {
-    // Enter 키 + onBlur 이중 호출 방어
+    // Guard against double invocation from Enter key + onBlur
     if (!isRenamingRef.current) return
     isRenamingRef.current = false
     setIsRenaming(false)
@@ -266,7 +266,7 @@ export default function MarkdownEditor() {
     }
   }, [vaultPath, setLoadedDocuments, setNodes, setLinks, openInEditor])
 
-  // ── 저장 ──────────────────────────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────────────
 
   const doSave = useCallback(async (text: string) => {
     if (!canSaveRef.current) return
@@ -302,7 +302,7 @@ export default function MarkdownEditor() {
           setLinks(graphLinks)
         }
 
-        // BM25 증분 업데이트 — 저장된 문서만 재처리
+        // BM25 incremental update — reprocess only the saved document
         if (tfidfIndex.isBuilt) {
           try {
             const fingerprint = String(Date.now())
@@ -315,7 +315,7 @@ export default function MarkdownEditor() {
             const vaultRoot = useVaultStore.getState().vaultPath
             if (vaultRoot) saveTfIdfCache(vaultRoot, serialized).catch(() => {})
           } catch {
-            // BM25 업데이트 실패는 무음 처리 (다음 전체 로드에서 복구)
+            // BM25 update failure is silently handled (recovers on next full load)
           }
         }
       }
@@ -341,7 +341,7 @@ export default function MarkdownEditor() {
   const handleManualSaveRef = useRef(handleManualSave)
   handleManualSaveRef.current = handleManualSave
 
-  // ── WikiLink 클릭 탐색 ─────────────────────────────────────────────────────
+  // ── WikiLink click navigation ─────────────────────────────────────────────────────
 
   const handleLinkClick = useCallback((slug: string) => {
     const target = loadedDocsRef.current?.find(d =>
@@ -353,8 +353,8 @@ export default function MarkdownEditor() {
   const handleLinkClickRef = useRef(handleLinkClick)
   handleLinkClickRef.current = handleLinkClick
 
-  // 잠금 상태에서 ![[image.png]] 클릭 시 이미지 갤러리 열기
-  // 클릭한 이미지가 속한 문서의 갤러리 노드(gallery:{docId})를 엽니다.
+  // Open image gallery when clicking ![[image.png]] in locked state
+  // Opens the gallery node (gallery:{docId}) of the document containing the clicked image.
   const handleImageClick = useCallback((_ref: string) => {
     if (editingDocId) openInEditor(`gallery:${editingDocId}`)
   }, [openInEditor, editingDocId])
@@ -362,7 +362,7 @@ export default function MarkdownEditor() {
   const handleImageClickRef = useRef(handleImageClick)
   handleImageClickRef.current = handleImageClick
 
-  // ── WikiLink 자동완성 확정 ─────────────────────────────────────────────────
+  // ── WikiLink autocomplete confirm ─────────────────────────────────────────────────
 
   const applyWikiSuggest = useCallback((name: string) => {
     const view = viewRef.current
@@ -382,7 +382,7 @@ export default function MarkdownEditor() {
   const applyRef = useRef(applyWikiSuggest)
   applyRef.current = applyWikiSuggest
 
-  // ── EditorView 초기화 ──────────────────────────────────────────────────────
+  // ── EditorView initialization ──────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!editorMountRef.current || !doc) return
@@ -409,7 +409,7 @@ export default function MarkdownEditor() {
           drawSelection(),
           highlightActiveLine(),
           keymap.of([
-            // WikiLink 자동완성 키 (defaultKeymap보다 먼저 등록)
+            // WikiLink autocomplete keys (registered before defaultKeymap)
             {
               key: 'ArrowDown',
               run: () => {
@@ -457,10 +457,10 @@ export default function MarkdownEditor() {
                 return true
               },
             },
-            // ── Markdown 리스트 들여쓰기 ──
+            // ── Markdown list indentation ──
             { key: 'Tab',       run: mdIndentList },
             { key: 'Shift-Tab', run: mdDedentList },
-            // ── 리스트 / 인용구 연속 생성 (WikiSuggest가 비활성일 때만) ──
+            // ── List / blockquote continuation (only when WikiSuggest is inactive) ──
             {
               key: 'Enter',
               run: (view) => {
@@ -469,7 +469,7 @@ export default function MarkdownEditor() {
                 return mdContinueBlockquote(view)
               },
             },
-            // ── 인라인 서식 ──
+            // ── Inline formatting ──
             { key: 'Ctrl-b',       run: (view) => mdToggleMark(view, '**') },
             { key: 'Mod-b',        run: (view) => mdToggleMark(view, '**') },
             { key: 'Ctrl-i',       run: (view) => mdToggleMark(view, '*') },
@@ -494,7 +494,7 @@ export default function MarkdownEditor() {
           EditorView.lineWrapping,
           readOnlyCompartment.current.of([]),
           EditorView.updateListener.of((update) => {
-            // 자동저장
+            // Auto-save
             if (update.docChanged) {
               isDirty.current = true
               setSaveStatus('idle')
@@ -503,7 +503,7 @@ export default function MarkdownEditor() {
               saveTimer.current = setTimeout(() => doSaveRef.current(text), AUTOSAVE_DELAY)
             }
 
-            // [[ 자동완성 감지
+            // [[ autocomplete detection
             if (update.docChanged || update.selectionSet) {
               const { state } = update
               const cursor = state.selection.main.head
@@ -546,7 +546,7 @@ export default function MarkdownEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id])
 
-  // Lock 토글
+  // Lock toggle
   useEffect(() => {
     viewRef.current?.dispatch({
       effects: readOnlyCompartment.current.reconfigure(
@@ -555,7 +555,7 @@ export default function MarkdownEditor() {
     })
   }, [isLocked])
 
-  // 문서 전환 시 localTags 동기화
+  // Sync localTags on document switch
   useEffect(() => {
     setLocalTags(doc?.tags ?? [])
     setIsAddingTag(false)
@@ -567,7 +567,7 @@ export default function MarkdownEditor() {
     setIsSuggestingSpeaker(false)
   }, [doc?.id])
 
-  // ── 태그 편집 ──────────────────────────────────────────────────────────────
+  // ── Tag editing ──────────────────────────────────────────────────────────────
 
   const handleTagChange = useCallback((newTags: string[], saveUndo = true) => {
     if (saveUndo) setPreviousTags(localTags)
@@ -633,14 +633,14 @@ export default function MarkdownEditor() {
     const parsed = matter(raw)
     const pageId = parsed.data?.confluence_page_id as string | undefined
     if (!pageId) {
-      alert('frontmatter에 confluence_page_id가 없습니다.\n예: confluence_page_id: "12345"')
+      alert('No confluence_page_id in frontmatter.\nExample: confluence_page_id: "12345"')
       return
     }
     const { activeVaultId } = useVaultStore.getState()
     const { confluenceConfigs } = useSettingsStore.getState()
     const cfg = confluenceConfigs[activeVaultId]
     if (!cfg?.baseUrl) {
-      alert('설정에서 Confluence 연동을 먼저 구성해주세요.')
+      alert('Please configure Confluence integration in settings first.')
       return
     }
     const authHeader = cfg.authType === 'cloud' || cfg.authType === 'server_basic'
@@ -648,7 +648,7 @@ export default function MarkdownEditor() {
       : makePATAuth(cfg.apiToken)
     const creds = { baseUrl: cfg.baseUrl, authHeader }
 
-    // markdown body (frontmatter 제거)
+    // markdown body (frontmatter removed)
     const bodyMd = parsed.content.trimStart()
     const title = currentDoc.filename.replace(/\.md$/i, '')
 
@@ -659,7 +659,7 @@ export default function MarkdownEditor() {
       setTimeout(() => setConfluenceUploadStatus('idle'), 3000)
     } catch (e) {
       setConfluenceUploadStatus('error')
-      alert(`Confluence 업로드 실패: ${e instanceof Error ? e.message : String(e)}`)
+      alert(`Confluence upload failed: ${e instanceof Error ? e.message : String(e)}`)
       setTimeout(() => setConfluenceUploadStatus('idle'), 3000)
     }
   }, [])
@@ -676,7 +676,7 @@ export default function MarkdownEditor() {
     setSuggestedSpeaker(null)
   }, [suggestedSpeaker])
 
-  // ── 문서 없음 ─────────────────────────────────────────────────────────────
+  // ── No document ─────────────────────────────────────────────────────────────
 
   if (!doc) {
     return (
@@ -687,7 +687,7 @@ export default function MarkdownEditor() {
           color: 'var(--color-text-muted)', fontSize: 13,
         }}
       >
-        <span>열린 파일이 없습니다</span>
+        <span>No file open</span>
         <button
           onClick={closeEditor}
           style={{
@@ -700,7 +700,7 @@ export default function MarkdownEditor() {
           onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)' }}
         >
           <ArrowLeft size={13} />
-          그래프로 돌아가기
+          Back to Graph
         </button>
       </div>
     )
@@ -717,7 +717,7 @@ export default function MarkdownEditor() {
           style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontSize: 11, transition: 'color 0.1s' }}
           onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
           onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-          title="에디터 닫기"
+          title="Close editor"
         >
           <ArrowLeft size={13} />
         </button>
@@ -744,7 +744,7 @@ export default function MarkdownEditor() {
         ) : (
           <button
             onClick={canSave ? startRename : undefined}
-            title={canSave ? '클릭하여 이름 변경' : doc.filename}
+            title={canSave ? 'Click to rename' : doc.filename}
             style={{
               flex: 1, fontSize: 12, fontWeight: 500,
               color: 'var(--color-text-primary)',
@@ -763,16 +763,16 @@ export default function MarkdownEditor() {
         <button
           onClick={() => setIsLocked(v => !v)}
           style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4, color: isLocked ? 'var(--color-error)' : 'var(--color-text-muted)', cursor: 'pointer', padding: '3px 7px', fontSize: 11, transition: 'color 0.15s, border-color 0.15s' }}
-          title={isLocked ? '잠금 해제 (편집 허용)' : '잠금 (편집 제한)'}
+          title={isLocked ? 'Unlock (allow editing)' : 'Lock (restrict editing)'}
         >
           {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: !canSave ? 'var(--color-text-muted)' : saveStatus === 'saved' ? 'var(--color-success)' : saveStatus === 'error' ? 'var(--color-error)' : 'var(--color-text-muted)', transition: 'color 0.2s' }}>
-          {!canSave && '읽기 전용'}
-          {canSave && saveStatus === 'saved' && <><CheckCircle size={11} />저장됨</>}
-          {canSave && saveStatus === 'saving' && '저장 중…'}
-          {canSave && saveStatus === 'error' && <><AlertCircle size={11} />저장 실패</>}
+          {!canSave && 'Read-only'}
+          {canSave && saveStatus === 'saved' && <><CheckCircle size={11} />Saved</>}
+          {canSave && saveStatus === 'saving' && 'Saving...'}
+          {canSave && saveStatus === 'error' && <><AlertCircle size={11} />Save failed</>}
         </div>
 
         <button
@@ -781,12 +781,12 @@ export default function MarkdownEditor() {
           style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4, color: 'var(--color-text-muted)', cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.3, padding: '3px 7px', fontSize: 11, transition: 'color 0.1s, border-color 0.1s' }}
           onMouseEnter={e => { if (canSave) { e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)' } }}
           onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)' }}
-          title={canSave ? '저장 (Ctrl+S)' : '볼트 파일이 아니면 저장할 수 없습니다'}
+          title={canSave ? 'Save (Ctrl+S)' : 'Cannot save non-vault files'}
         >
           <Save size={11} />
         </button>
 
-        {/* Confluence 역방향 업로드 버튼 — frontmatter에 confluence_page_id가 있을 때 활성 */}
+        {/* Confluence reverse upload button — active when frontmatter has confluence_page_id */}
         {canSave && (() => {
           const raw = (doc as LoadedDocument)?.rawContent ?? ''
           const hasCfId = raw.includes('confluence_page_id')
@@ -807,10 +807,10 @@ export default function MarkdownEditor() {
                 cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.5 : 1,
                 padding: '3px 7px', transition: 'all 0.1s',
               }}
-              title="Confluence 페이지에 업로드"
+              title="Upload to Confluence page"
             >
               {uploading ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : '↑'}
-              {done ? '업로드됨' : err ? '실패' : 'Confluence'}
+              {done ? 'Uploaded' : err ? 'Failed' : 'Confluence'}
             </button>
           )
         })()}
@@ -820,7 +820,7 @@ export default function MarkdownEditor() {
           style={{ display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '3px', borderRadius: 4, transition: 'color 0.1s' }}
           onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
           onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-          title="닫기"
+          title="Close"
         >
           <X size={13} />
         </button>
@@ -845,7 +845,7 @@ export default function MarkdownEditor() {
                 <button
                   onClick={() => handleTagChange(localTags.filter(t => t !== tag))}
                   style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1 }}
-                  title={`"${tag}" 태그 제거`}
+                  title={`Remove "${tag}" tag`}
                 >
                   ×
                 </button>
@@ -856,7 +856,7 @@ export default function MarkdownEditor() {
           {!isLocked && (
             isAddingTag
               ? <>
-                  {/* 프리셋 태그 빠른 선택 */}
+                  {/* Preset tag quick selection */}
                   {tagPresets.filter(p => !localTags.includes(p)).map(p => (
                     <button
                       key={p}
@@ -866,7 +866,7 @@ export default function MarkdownEditor() {
                         setIsAddingTag(false)
                       }}
                       style={{ fontSize: 10, color: 'var(--color-accent)', background: 'var(--color-bg-active)', border: '1px solid rgba(96,165,250,0.3)', cursor: 'pointer', padding: '1px 5px', borderRadius: 3, transition: 'opacity 0.1s' }}
-                      title={`#${p} 태그 추가`}
+                      title={`Add #${p} tag`}
                     >
                       #{p}
                     </button>
@@ -874,7 +874,7 @@ export default function MarkdownEditor() {
                   <input
                     autoFocus
                     value={tagInput}
-                    placeholder="직접 입력…"
+                    placeholder="Type tag..."
                     onChange={e => setTagInput(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') { e.preventDefault(); commitTag() }
@@ -889,9 +889,9 @@ export default function MarkdownEditor() {
                   style={{ fontSize: 10, color: 'var(--color-text-muted)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '1px 4px', borderRadius: 3, transition: 'color 0.1s' }}
                   onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                   onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-                  title="태그 추가"
+                  title="Add tag"
                 >
-                  + 태그
+                  + Tag
                 </button>
           )}
 
@@ -903,7 +903,7 @@ export default function MarkdownEditor() {
                 style={{ display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: isSuggestingTags ? 'default' : 'pointer', padding: '1px 4px', borderRadius: 3, transition: 'color 0.1s', opacity: isSuggestingTags ? 0.5 : 1 }}
                 onMouseEnter={e => { if (!isSuggestingTags) e.currentTarget.style.color = 'var(--color-accent)' }}
                 onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)' }}
-                title="AI 태그 제안"
+                title="AI tag suggestions"
               >
                 {isSuggestingTags ? <Loader2 size={10} /> : <Wand2 size={10} />}
               </button>
@@ -913,7 +913,7 @@ export default function MarkdownEditor() {
                 style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: isSuggestingSpeaker ? 'default' : 'pointer', padding: '1px 4px', borderRadius: 3, transition: 'color 0.1s', opacity: isSuggestingSpeaker ? 0.5 : 1, fontSize: 10 }}
                 onMouseEnter={e => { if (!isSuggestingSpeaker) e.currentTarget.style.color = 'var(--color-accent)' }}
                 onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)' }}
-                title="AI 페르소나 제안"
+                title="AI persona suggestion"
               >
                 {isSuggestingSpeaker ? <Loader2 size={10} /> : '👤'}
               </button>
@@ -926,7 +926,7 @@ export default function MarkdownEditor() {
               style={{ display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 4px', borderRadius: 3, transition: 'color 0.1s' }}
               onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
               onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-              title="태그 되돌리기"
+              title="Undo tag changes"
             >
               <RotateCcw size={10} />
             </button>
@@ -934,7 +934,7 @@ export default function MarkdownEditor() {
 
           {suggestedSpeaker !== null && (
             <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 5, paddingTop: 3 }}>
-              <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>페르소나 제안:</span>
+              <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>Persona suggestion:</span>
               <span style={{ fontSize: 10, color: 'var(--color-accent)', background: 'var(--color-bg-active)', borderRadius: 3, padding: '1px 5px' }}>
                 {suggestedSpeaker}
               </span>
@@ -944,7 +944,7 @@ export default function MarkdownEditor() {
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                적용
+                Apply
               </button>
               <button
                 onClick={() => setSuggestedSpeaker(null)}
@@ -952,16 +952,16 @@ export default function MarkdownEditor() {
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                취소
+                Cancel
               </button>
             </div>
           )}
 
           {suggestedTags !== null && (
             <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 5, paddingTop: 3 }}>
-              <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>제안:</span>
+              <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>Suggestions:</span>
               {suggestedTags.length === 0
-                ? <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>적합한 태그 없음</span>
+                ? <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>No suitable tags</span>
                 : suggestedTags.map(t => (
                     <span key={t} style={{ fontSize: 10, color: 'var(--color-accent)', background: 'var(--color-bg-active)', borderRadius: 3, padding: '1px 5px' }}>#{t}</span>
                   ))
@@ -973,7 +973,7 @@ export default function MarkdownEditor() {
                   onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                   onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
                 >
-                  적용
+                  Apply
                 </button>
               )}
               <button
@@ -982,17 +982,17 @@ export default function MarkdownEditor() {
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                취소
+                Cancel
               </button>
             </div>
           )}
         </div>
       )}
 
-      {/* ── CodeMirror 에디터 ── */}
+      {/* ── CodeMirror editor ── */}
       <div ref={editorMountRef} style={{ flex: 1, minHeight: 0 }} />
 
-      {/* ── WikiLink 자동완성 드롭다운 (React portal → document.body) ── */}
+      {/* ── WikiLink autocomplete dropdown (React portal → document.body) ── */}
       {wikiSuggest && filteredDocs.length > 0 && (
         <SuggestDropdown
           docs={filteredDocs}

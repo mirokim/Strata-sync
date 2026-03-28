@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-check_outdated.py — §18.3 Graph RAG 최신성 버그 점검 도구
+check_outdated.py — §18.3 Graph RAG freshness check tool
 
-점검 항목 (§18.3):
-  ① status: outdated 인데 superseded_by 없는 파일
-     → --fix 옵션 시 .archive/ 자동 이동
-  ② 최근 N일 이내 신규 문서 중 역링크 0개인 고립 파일 탐지
-     → gen_year_hubs.py 재실행 또는 수동 링크 추가 필요
-  ③ currentSituation.md / _index.md 의 date 필드가 N일 초과 시 경고
-     → 수동 갱신 필요
-  ④ chief persona.md 연도 허브 순서 점검
-     → 최신 연도가 맨 위가 아니면 경고
+Inspection items (§18.3):
+  ① Files with status: outdated but no superseded_by
+     → Auto-move to .archive/ with --fix option
+  ② Detect isolated files with 0 backlinks among new documents within last N days
+     → Re-run gen_year_hubs.py or manually add links
+  ③ Warn if date field in currentSituation.md / _index.md exceeds N days
+     → Manual update needed
+  ④ Check year hub order in chief persona.md
+     → Warn if latest year is not at the top
 
-사용법:
+Usage:
   python check_outdated.py <active_dir> [--days 30] [--fix] [--archive <dir>]
 """
 
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 
 
 def parse_frontmatter(content: str) -> dict:
-    """frontmatter 주요 필드를 dict 로 반환."""
+    """Return main frontmatter fields as dict."""
     if not content.startswith('---'):
         return {}
     end = content.find('\n---\n', 4)
@@ -68,10 +68,10 @@ def check_outdated(
     archive_dir: Path | None = None,
 ) -> None:
     today = datetime.now()
-    cutoff_new = today - timedelta(days=days)   # 최근 N일 기준
-    cutoff_hub = today - timedelta(days=days)   # 허브 갱신 기준
+    cutoff_new = today - timedelta(days=days)   # Last N days threshold
+    cutoff_hub = today - timedelta(days=days)   # Hub update threshold
 
-    # ── 인바운드 링크 맵 구축 (② 에서 사용) ──────────────────────────
+    # ── Build inbound link map (used in ②) ──────────────────────────
     inbound = build_inbound_map(active_dir)
 
     outdated_no_supersede: list[Path] = []
@@ -90,11 +90,11 @@ def check_outdated(
         superseded_by = fm.get('superseded_by', '')
         date_str = fm.get('date', '')
 
-        # ① status: outdated 인데 superseded_by 없는 파일
+        # ① status: outdated but no superseded_by
         if status == 'outdated' and not superseded_by:
             outdated_no_supersede.append(md)
 
-        # ② 최근 N일 신규 문서 중 역링크 0개
+        # ② New documents in last N days with 0 backlinks
         if date_str:
             try:
                 doc_date = datetime.strptime(date_str[:10], '%Y-%m-%d')
@@ -104,7 +104,7 @@ def check_outdated(
             except ValueError:
                 pass
 
-        # ③ currentSituation.md / _index.md 갱신 여부
+        # ③ Whether currentSituation.md / _index.md needs update
         if md.name.lower() in ('currentsituation.md', '_index.md'):
             if date_str:
                 try:
@@ -113,11 +113,11 @@ def check_outdated(
                     if age > days:
                         hub_stale.append((md.name, date_str[:10]))
                 except ValueError:
-                    hub_stale.append((md.name, f'날짜 파싱 불가: {date_str}'))
+                    hub_stale.append((md.name, f'Unable to parse date: {date_str}'))
             else:
-                hub_stale.append((md.name, '(date 필드 없음)'))
+                hub_stale.append((md.name, '(no date field)'))
 
-        # ④ chief persona.md 연도 허브 순서 점검
+        # ④ Check year hub order in chief persona.md
         if md.stem.lower() == 'chief persona' or md.name.lower() == 'chief persona.md':
             body = get_body(content)
             years = re.findall(r'회의록_(\d{4})', body)
@@ -126,12 +126,12 @@ def check_outdated(
                 for i in range(len(years_int) - 1):
                     if years_int[i] < years_int[i + 1]:
                         chief_persona_order_warn.append(
-                            f"연도 허브 순서 오류: {years_int} "
+                            f"연도 허브 순서 Error: {years_int} "
                             f"(최신 연도가 맨 위여야 함)"
                         )
                         break
 
-    # ── 출력 ──────────────────────────────────────────────────────────
+    # ── Output ──────────────────────────────────────────────────────────
     print("=" * 60)
     print(f"§18.3 Graph RAG 최신성 점검 (기준: {days}일)")
     print("=" * 60)
@@ -154,7 +154,7 @@ def check_outdated(
                 shutil.move(str(p), str(dest))
                 moved += 1
                 print(f"   → .archive/ 이동: {p.name[:55]}")
-        print(f"   --fix: {moved}개 파일 이동 완료")
+        print(f"   --fix: {moved} files 이동 Complete")
 
     # ②
     print(f"\n② 최근 {days}일 신규 문서 중 역링크 0개 (고립): {len(orphan_new_docs)}개")
@@ -163,14 +163,14 @@ def check_outdated(
     if len(orphan_new_docs) > 15:
         print(f"   ... 외 {len(orphan_new_docs) - 15}개")
     if orphan_new_docs:
-        print("   → gen_year_hubs.py 재실행 또는 수동 역링크 추가 필요")
+        print("   → Re-run gen_year_hubs.py or manually add backlinks")
 
     # ③
     print(f"\n③ 허브 문서 갱신 필요 ({days}일 초과): {len(hub_stale)}개")
     for fname, date in hub_stale:
         print(f"   {fname}  (마지막 날짜: {date})")
     if hub_stale:
-        print("   → currentSituation.md / _index.md 수동 갱신 필요")
+        print("   → Manual update of currentSituation.md / _index.md needed")
 
     # ④
     print(f"\n④ chief persona.md 연도 허브 순서: ", end='')
@@ -178,16 +178,16 @@ def check_outdated(
         print(f"⚠️  {len(chief_persona_order_warn)}건 오류")
         for w in chief_persona_order_warn:
             print(f"   {w}")
-        print("   → chief persona.md 에서 최신 연도를 맨 위로 이동 필요")
+        print("   → Move latest year to top in chief persona.md")
     else:
-        print("✅ 정상 (또는 chief persona.md 없음)")
+        print("✅ Normal (or chief persona.md not found)")
 
     print()
 
 
 def main():
     parser = argparse.ArgumentParser(description='§18.3 Graph RAG 최신성 점검')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
+    parser.add_argument('active_dir', help='active/ folder path')
     parser.add_argument('--days', type=int, default=30,
                         help='점검 기준 일수 (①② 신규 판정, ③ 허브 갱신 기준, 기본: 30)')
     parser.add_argument('--fix', action='store_true',
@@ -198,7 +198,7 @@ def main():
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 폴더를 찾을 수 없습니다.")
+        print(f"Error: {active_dir} folder not found.")
         sys.exit(1)
 
     archive_dir = Path(args.archive) if args.archive else None

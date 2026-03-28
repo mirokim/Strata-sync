@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-md_normalize.py — §4.7 기존 MD 파일 Frontmatter 정규화
+md_normalize.py — §4.7 Existing MD file frontmatter normalization
 
-처리 방침:
-  - 내용(본문)은 절대 변경하지 않음
-  - frontmatter가 없으면 파일명·수정일 기반으로 자동 생성
-  - frontmatter가 있으면 필수 필드(date / type / status / tags / origin) 누락분만 보완
-  - origin: md 필드 추가 (다른 origin 있으면 유지)
-  - ![[이미지]] 링크 대상이 attachments/ 에 없으면 경고 출력
+Processing policy:
+  - Body content is never modified
+  - If no frontmatter, auto-generate based on filename and modification date
+  - If frontmatter exists, only supplement missing required fields (date / type / status / tags / origin)
+  - Add origin: md field (keep existing origin if present)
+  - Output warning if ![[image]] link target not found in attachments/
 
-필수 필드:
+Required fields:
   date, type, status, tags, origin
 
-사용법:
+Usage:
   python md_normalize.py <active_dir> [--attachments <dir>] [--dry-run] [--verbose]
 """
 
@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 
 
-# ── 날짜 패턴 ────────────────────────────────────────────────────
+# ── Date patterns ────────────────────────────────────────────────────
 DATE_PATTERNS = [
     re.compile(r'(\d{4})-(\d{2})-(\d{2})'),
     re.compile(r'(\d{4})(\d{2})(\d{2})'),
@@ -82,9 +82,9 @@ def infer_tags_from_stem(stem: str, doc_type: str) -> str:
     return '[' + ', '.join(unique) + ']'
 
 
-# ── Frontmatter 파싱 ──────────────────────────────────────────────
+# ── Parse frontmatter ──────────────────────────────────────────────
 def parse_frontmatter(content: str) -> tuple[dict, str, int]:
-    """frontmatter 파싱. 반환: (fields_dict, fm_raw, fm_end_pos)"""
+    """Parse frontmatter. Returns: (fields_dict, fm_raw, fm_end_pos)"""
     if not content.startswith('---'):
         return {}, '', 0
     end = content.find('\n---\n', 4)
@@ -106,12 +106,12 @@ def get_field(fields: dict, key: str) -> str:
 
 # ── Frontmatter 보완 ──────────────────────────────────────────────
 def supplement_frontmatter(content: str, path: Path) -> tuple[str, list[str]]:
-    """누락 필드 보완. 변경된 필드 목록 반환."""
+    """Supplement missing fields. Returns list of changed fields."""
     changed = []
     fields, fm_block, body_start = parse_frontmatter(content)
 
     if not fm_block:
-        # frontmatter 없음 → 새로 생성
+        # No frontmatter → create new
         date     = detect_date_from_stem(path.stem) or detect_date_from_mtime(path)
         doc_type = infer_type_from_stem(path.stem)
         tags     = infer_tags_from_stem(path.stem, doc_type)
@@ -126,10 +126,10 @@ def supplement_frontmatter(content: str, path: Path) -> tuple[str, list[str]]:
             f"origin: md\n"
             f"---\n\n"
         )
-        changed.append('frontmatter(신규생성)')
+        changed.append('frontmatter(newly created)')
         return new_fm + content, changed
 
-    # ── 누락 필드 보완 ──
+    # ── Supplement missing fields ──
     lines = fm_block.rstrip().rstrip('---').strip().splitlines()
 
     def has_field(key: str) -> bool:
@@ -163,7 +163,7 @@ def supplement_frontmatter(content: str, path: Path) -> tuple[str, list[str]]:
     if not inserts:
         return content, []
 
-    # 삽입: --- 끝나는 줄 바로 위에 추가
+    # Insert: add just above the closing --- line
     fm_lines = fm_block.splitlines()
     # fm_block의 마지막 줄이 '---' 이므로 그 앞에 삽입
     close_idx = len(fm_lines) - 1
@@ -179,7 +179,7 @@ def supplement_frontmatter(content: str, path: Path) -> tuple[str, list[str]]:
 # ── 이미지 링크 점검 ──────────────────────────────────────────────
 def check_image_links(content: str, path: Path,
                       attachments_dir: Path) -> list[str]:
-    """![[파일명]] 링크 대상이 attachments/ 에 없으면 경고 목록 반환."""
+    """Return warning list if ![[filename]] link target not found in attachments/."""
     if not attachments_dir or not attachments_dir.exists():
         return []
     image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp',
@@ -194,7 +194,7 @@ def check_image_links(content: str, path: Path,
     return warnings
 
 
-# ── 메인 ─────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────────────
 def run(active_dir: Path, attachments_dir: Path | None,
         dry_run: bool, verbose: bool) -> dict:
     stats = {
@@ -213,7 +213,7 @@ def run(active_dir: Path, attachments_dir: Path | None,
 
         new_content, changed_fields = supplement_frontmatter(content, md)
 
-        # 이미지 링크 점검
+        # Check image links
         if attachments_dir:
             warns = check_image_links(new_content, md, attachments_dir)
             if warns:
@@ -227,7 +227,7 @@ def run(active_dir: Path, attachments_dir: Path | None,
             if not dry_run:
                 md.write_text(new_content, encoding='utf-8')
             if verbose:
-                print(f"  수정: {md.name[:55]}  [{', '.join(changed_fields)}]")
+                print(f"  Modified: {md.name[:55]}  [{', '.join(changed_fields)}]")
         else:
             stats['no_change'] += 1
 
@@ -236,16 +236,16 @@ def run(active_dir: Path, attachments_dir: Path | None,
 
 def main():
     parser = argparse.ArgumentParser(description='§4.7 MD 파일 frontmatter 정규화')
-    parser.add_argument('active_dir',    help='active/ 폴더 경로')
+    parser.add_argument('active_dir',    help='active/ folder path')
     parser.add_argument('--attachments', default=None,
                         help='attachments/ 폴더 경로 (기본: active/../attachments)')
-    parser.add_argument('--dry-run',     action='store_true', help='수정 없이 미리보기')
+    parser.add_argument('--dry-run',     action='store_true', help='Preview without modifying')
     parser.add_argument('--verbose', '-v', action='store_true')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 없음"); sys.exit(1)
+        print(f"Error: {active_dir} not found"); sys.exit(1)
 
     att_dir = Path(args.attachments) if args.attachments \
               else active_dir.parent / 'attachments'
@@ -255,11 +255,11 @@ def main():
                 args.dry_run, args.verbose)
 
     print(f"\n{'='*50}")
-    print(f"§4.7 md_normalize 완료{'  [DRY-RUN]' if args.dry_run else ''}")
+    print(f"§4.7 md_normalize Complete{'  [DRY-RUN]' if args.dry_run else ''}")
     print(f"{'='*50}")
-    print(f"  총 MD 파일:       {stats['total']}개")
-    print(f"  frontmatter 보완: {stats['changed']}개")
-    print(f"  변경 없음:        {stats['no_change']}개")
+    print(f"  Total MD files:       {stats['total']}개")
+    print(f"  Frontmatter supplemented: {stats['changed']}개")
+    print(f"  No change:        {stats['no_change']}개")
     if stats['img_warnings']:
         print(f"  ⚠️ 이미지 링크 경고: {stats['img_warnings']}건 (attachments/ 없음)")
 

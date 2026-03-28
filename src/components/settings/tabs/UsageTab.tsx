@@ -7,15 +7,15 @@ import { formatTokens, formatCost } from '@/lib/formatUtils'
 import { RotateCcw, Trash2, ChevronDown, ChevronUp, Download } from 'lucide-react'
 
 const CALLER_LABEL: Record<string, string> = {
-  chat: '채팅',
-  editAgent: '편집 에이전트',
-  debate: '토론',
-  graphInsight: '그래프 인사이트',
+  chat: 'Chat',
+  editAgent: 'Edit Agent',
+  debate: 'Debate',
+  graphInsight: 'Graph Insight',
 }
 
 function formatTime(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toLocaleString('en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function shortModel(id: string): string {
@@ -26,7 +26,7 @@ function shortModel(id: string): string {
     .replace('gpt-', '')
 }
 
-/** 로그를 CSV로 내보내기 */
+/** Export log as CSV */
 function exportLogCsv(log: UsageLogEntry[]) {
   const header = 'timestamp,model,caller,input_tokens,output_tokens,cost_usd'
   const rows = log.map(e =>
@@ -41,7 +41,7 @@ function exportLogCsv(log: UsageLogEntry[]) {
   URL.revokeObjectURL(url)
 }
 
-/** 날짜별로 그룹화해서 일별 요약 생성 */
+/** Group by date and generate daily summary */
 function getDailySummary(log: UsageLogEntry[]) {
   const map = new Map<string, { input: number; output: number; cost: number; calls: number }>()
   for (const e of log) {
@@ -82,9 +82,9 @@ export default function UsageTab() {
       {/* Session summary */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
         {[
-          { label: '입력 토큰', value: formatTokens(totalInputTokens), color: '#94a3b8' },
-          { label: '출력 토큰', value: formatTokens(totalOutputTokens), color: '#94a3b8' },
-          { label: '예상 비용', value: formatCost(totalCostUsd), color: '#f59e0b' },
+          { label: 'Input Tokens', value: formatTokens(totalInputTokens), color: '#94a3b8' },
+          { label: 'Output Tokens', value: formatTokens(totalOutputTokens), color: '#94a3b8' },
+          { label: 'Est. Cost', value: formatCost(totalCostUsd), color: '#f59e0b' },
         ].map(item => (
           <div key={item.label} style={{
             padding: '14px 16px', background: 'rgba(255,255,255,0.04)',
@@ -99,15 +99,15 @@ export default function UsageTab() {
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button onClick={resetSession} style={btnStyle}>
-          <RotateCcw size={12} /> 세션 초기화
+          <RotateCcw size={12} /> Reset Session
         </button>
         {log.length > 0 && (
           <>
             <button onClick={() => exportLogCsv(log)} style={btnStyle}>
-              <Download size={12} /> CSV 내보내기
+              <Download size={12} /> Export CSV
             </button>
-            <button onClick={() => { if (confirm('전체 사용 로그를 삭제합니다.')) clearLog() }} style={btnStyle}>
-              <Trash2 size={12} /> 로그 삭제
+            <button onClick={() => { if (confirm('Delete all usage logs.')) clearLog() }} style={btnStyle}>
+              <Trash2 size={12} /> Delete Log
             </button>
           </>
         )}
@@ -117,13 +117,13 @@ export default function UsageTab() {
       {dailySummary.length > 0 && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-            일별 사용량 (누적 {formatCost(logCostTotal)})
+            Daily Usage (cumulative {formatCost(logCostTotal)})
           </div>
           <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  {['날짜', '호출', '입력', '출력', '비용'].map(h => (
+                  {['Date', 'Calls', 'Input', 'Output', 'Cost'].map(h => (
                     <th key={h} style={{
                       textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-muted)',
                       fontWeight: 500, borderBottom: '1px solid var(--color-bg-tertiary)',
@@ -155,14 +155,14 @@ export default function UsageTab() {
             style={{ ...btnStyle, background: 'transparent', padding: '4px 0', color: 'var(--color-text-primary)', fontWeight: 500, fontSize: 13 }}
           >
             {showLog ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            호출 로그 ({log.length}건)
+            Call Log ({log.length} entries)
           </button>
           {showLog && (
             <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, overflow: 'hidden', marginTop: 8, maxHeight: 400, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                 <thead>
                   <tr style={{ background: 'rgba(255,255,255,0.04)', position: 'sticky', top: 0 }}>
-                    {['시간', '모델', '기능', 'IN', 'OUT', '비용'].map(h => (
+                    {['Time', 'Model', 'Feature', 'IN', 'OUT', 'Cost'].map(h => (
                       <th key={h} style={{
                         textAlign: 'left', padding: '6px 8px', color: 'var(--color-text-muted)',
                         fontWeight: 500, borderBottom: '1px solid var(--color-bg-tertiary)',
@@ -196,14 +196,14 @@ export default function UsageTab() {
           style={{ ...btnStyle, background: 'transparent', padding: '4px 0', color: 'var(--color-text-primary)', fontWeight: 500, fontSize: 13 }}
         >
           {showPricing ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          모델 가격표
+          Model Pricing
         </button>
         {showPricing && (
           <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, overflow: 'hidden', marginTop: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  {['모델', '입력', '출력'].map(h => (
+                  {['Model', 'Input', 'Output'].map(h => (
                     <th key={h} style={{
                       textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-muted)',
                       fontWeight: 500, borderBottom: '1px solid var(--color-bg-tertiary)',
@@ -222,7 +222,7 @@ export default function UsageTab() {
               </tbody>
             </table>
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', padding: '8px 12px' }}>
-              * USD / 1M 토큰 기준, 근사치
+              * USD / 1M tokens, approximate
             </div>
           </div>
         )}

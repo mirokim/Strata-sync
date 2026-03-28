@@ -1,4 +1,4 @@
-"""test_telegram_utils.py — Telegram 유틸리티 유닛 테스트"""
+"""test_telegram_utils.py — Telegram utility unit tests"""
 import pytest
 import sys
 from pathlib import Path

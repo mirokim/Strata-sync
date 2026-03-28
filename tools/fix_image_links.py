@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fix_image_links.py — 괄호 포함 파일명의 깨진 이미지 링크 수정
+fix_image_links.py — Fix broken image links for filenames with parentheses
 
 문제: 파일명에 ')'가 포함된 첨부파일을 참조할 때
   ![[stem_without_paren]]_N.ext)   ← 잘못된 형식
@@ -8,9 +8,9 @@ fix_image_links.py — 괄호 포함 파일명의 깨진 이미지 링크 수정
 
 원인: postprocess_md에서 정규식 [^)]+ 이 ')'에서 멈춰 파일명 잘림
 
-수정: 두 가지 패턴을 attachment 파일 목록과 대조하여 복원
+Modified: 두 가지 패턴을 attachment 파일 목록과 대조하여 복원
 
-사용법:
+Usage:
   python fix_image_links.py <active_dir> <attachments_dir>
 """
 
@@ -54,22 +54,22 @@ def fix_image_links(active_dir: Path, attachments_dir: Path) -> int:
         if n > 0:
             md.write_text(new_content, encoding='utf-8')
             total_fixed += n
-            print(f"  수정: {md.name} ({n}개)")
+            print(f"  Modified: {md.name} ({n}개)")
 
     return total_fixed
 
 
 def main():
     if len(sys.argv) < 3:
-        print(f"사용법: python {sys.argv[0]} <active_dir> <attachments_dir>")
+        print(f"Usage: python {sys.argv[0]} <active_dir> <attachments_dir>")
         sys.exit(1)
 
     active_dir = Path(sys.argv[1])
     attachments_dir = Path(sys.argv[2])
 
-    print("이미지 링크 버그 수정 시작...")
+    print("이미지 링크 버그 수정 starting...")
     n = fix_image_links(active_dir, attachments_dir)
-    print(f"\n총 {n}개 링크 수정 완료")
+    print(f"\n총 {n}개 링크 수정 Complete")
 
 
 if __name__ == '__main__':

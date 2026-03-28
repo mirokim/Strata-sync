@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-jira_sprint_move.py — Jira 이슈를 활성 스프린트로 이동
+jira_sprint_move.py — Move Jira issues to active sprint
 
-사용법:
+Usage:
   python jira_sprint_move.py SGEATF-12345
   python jira_sprint_move.py SGEATF-12345 --sprint-id 9999
   python jira_sprint_move.py SGEATF-12345 SGEATF-12346 ...  (일괄 이동)
 
-설정:
+Config:
   mcp-config.json 의 jira 섹션을 읽습니다.
   boardId 가 설정되어 있으면 해당 보드의 활성 스프린트를 사용합니다.
 """
@@ -25,7 +25,7 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# ── 설정 로드 ────────────────────────────────────────────────────────────────
+# ── Configuration 로드 ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / 'mcp-config.json'
 
@@ -34,7 +34,7 @@ def load_config() -> dict:
         cfg = json.load(f)
     return cfg.get('jira', {})
 
-# ── HTTP 헬퍼 ────────────────────────────────────────────────────────────────
+# ── HTTP helpers ────────────────────────────────────────────────────────────────
 def make_auth(cfg: dict) -> str:
     auth_type = cfg.get('authType', 'cloud')
     if auth_type == 'server_pat':
@@ -69,7 +69,7 @@ def api_request(cfg: dict, path: str, method: str = 'GET', body: dict | None = N
         print(f"[ERROR] {method} {path} → {e.code}: {body_text}", file=sys.stderr)
         return None
 
-# ── 활성 스프린트 탐색 ───────────────────────────────────────────────────────
+# ── Active sprint search ───────────────────────────────────────────────────────
 def get_active_sprint_id(cfg: dict) -> int | None:
     board_id = cfg.get('boardId')
     project_key = cfg.get('projectKey', '')
@@ -78,31 +78,31 @@ def get_active_sprint_id(cfg: dict) -> int | None:
     if not board_id:
         boards = api_request(cfg, f'/rest/agile/1.0/board?projectKeyOrId={project_key}&type=scrum')
         if not boards or not boards.get('values'):
-            print('[WARN] 스크럼 보드를 찾지 못했습니다.', file=sys.stderr)
+            print('[WARN] Could not find a scrum board.', file=sys.stderr)
             return None
         board_id = boards['values'][0]['id']
-        print(f'[INFO] 보드 자동 탐색: id={board_id}')
+        print(f'[INFO] Auto-detected board: id={board_id}')
 
     sprints = api_request(cfg, f'/rest/agile/1.0/board/{board_id}/sprint?state=active')
     if not sprints or not sprints.get('values'):
-        print('[WARN] 활성 스프린트가 없습니다.', file=sys.stderr)
+        print('[WARN] No active sprint found.', file=sys.stderr)
         return None
 
     sprint = sprints['values'][0]
-    print(f'[INFO] 활성 스프린트: {sprint["name"]} (id={sprint["id"]})')
+    print(f'[INFO] Active sprint: {sprint["name"]} (id={sprint["id"]})')
     return sprint['id']
 
-# ── 이슈 이동 ────────────────────────────────────────────────────────────────
+# ── Move issues ────────────────────────────────────────────────────────────────
 def move_issues(issue_keys: list[str], sprint_id: int, cfg: dict) -> bool:
     path = f'/rest/agile/1.0/sprint/{sprint_id}/issue'
     result = api_request(cfg, path, method='POST', body={'issues': issue_keys})
     return result is not None
 
-# ── 메인 ────────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description='Jira 이슈를 활성 스프린트로 이동')
-    parser.add_argument('issue_keys', nargs='+', help='이슈 키 (예: SGEATF-12345)')
-    parser.add_argument('--sprint-id', type=int, default=None, help='스프린트 ID 직접 지정 (미지정 시 자동 탐색)')
+    parser.add_argument('issue_keys', nargs='+', help='Issue key (e.g. SGEATF-12345)')
+    parser.add_argument('--sprint-id', type=int, default=None, help='Directly specify sprint ID (auto-detect if not specified)')
     args = parser.parse_args()
 
     cfg = load_config()
@@ -111,15 +111,15 @@ def main():
     if sprint_id is None:
         sprint_id = get_active_sprint_id(cfg)
         if sprint_id is None:
-            print('[ERROR] 스프린트 ID를 확인할 수 없습니다.', file=sys.stderr)
+            print('[ERROR] Could not determine sprint ID.', file=sys.stderr)
             sys.exit(1)
 
-    print(f'[INFO] 이슈 {args.issue_keys} → 스프린트 {sprint_id} 이동 중...')
+    print(f'[INFO] 이슈 {args.issue_keys} → 스프린트 {sprint_id} Moving...')
     ok = move_issues(args.issue_keys, sprint_id, cfg)
     if ok:
-        print(f'[OK] 이동 완료: {", ".join(args.issue_keys)}')
+        print(f'[OK] 이동 Complete: {", ".join(args.issue_keys)}')
     else:
-        print('[ERROR] 이동 실패', file=sys.stderr)
+        print('[ERROR] Move failed', file=sys.stderr)
         sys.exit(1)
 
 if __name__ == '__main__':

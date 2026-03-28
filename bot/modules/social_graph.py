@@ -1,8 +1,8 @@
 """
-social_graph.py — OASIS 소셜 네트워크 그래프
+social_graph.py — OASIS Social Network Graph
 
-Barabási-Albert 선호적 연결 모델로 현실적인 팔로우 네트워크를 생성합니다.
-OASIS social_graph.py를 Python으로 재현합니다.
+Generates a realistic follow network using the Barabási-Albert preferential attachment model.
+Reimplements OASIS social_graph.py in Python.
 """
 from __future__ import annotations
 
@@ -17,22 +17,22 @@ class SocialGraph:
     @classmethod
     def generate(cls, agent_ids: list[str], m: int = 2) -> "SocialGraph":
         """
-        Barabási-Albert 모델로 소셜 그래프 생성.
-        m: 신규 노드가 연결할 기존 노드 수 (기본 2).
-        팔로워가 많은 노드일수록 새 팔로우를 받을 확률이 높음.
+        Generate a social graph using the Barabási-Albert model.
+        m: number of existing nodes each new node connects to (default 2).
+        Nodes with more followers have a higher probability of receiving new follows.
         """
         graph = cls(agent_ids)
         if len(agent_ids) < 2:
             return graph
 
-        # 초기 클리크 (첫 m+1개 노드가 서로 팔로우)
+        # Initial clique (first m+1 nodes follow each other)
         initial = agent_ids[: min(m + 1, len(agent_ids))]
         for a in initial:
             for b in initial:
                 if a != b:
                     graph.follow(a, b)
 
-        # 나머지 노드 순차 추가 — 선호적 연결
+        # Add remaining nodes sequentially — preferential attachment
         for new_node in agent_ids[len(initial) :]:
             for target in graph._preferential_attachment(new_node, m):
                 graph.follow(new_node, target)
@@ -40,7 +40,7 @@ class SocialGraph:
         return graph
 
     def _preferential_attachment(self, exclude: str, m: int) -> list[str]:
-        """팔로워 수 비례 가중치로 m개 연결 대상 선택."""
+        """Select m connection targets with weights proportional to follower count."""
         pool: list[str] = []
         for agent_id, follower_set in self._followers.items():
             if agent_id == exclude:
@@ -54,7 +54,7 @@ class SocialGraph:
             targets.add(candidate)
         return list(targets)
 
-    # ── 팔로우 조작 ───────────────────────────────────────────────────────────
+    # ── Follow Operations ──────────────────────────────────────────────────────
 
     def follow(self, from_id: str, to_id: str) -> None:
         self._following.setdefault(from_id, set()).add(to_id)
@@ -64,7 +64,7 @@ class SocialGraph:
         self._following.get(from_id, set()).discard(to_id)
         self._followers.get(to_id, set()).discard(from_id)
 
-    # ── 조회 ──────────────────────────────────────────────────────────────────
+    # ── Queries ────────────────────────────────────────────────────────────────
 
     def get_following(self, agent_id: str) -> list[str]:
         return list(self._following.get(agent_id, set()))

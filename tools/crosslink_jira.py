@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-crosslink_jira.py — Jira ↔ Active 볼트 교차 링크 주입
+crosslink_jira.py — Jira ↔ Active vault cross-link injection
 
 Jira 파일(Epic, Release, attachments_md)과 Active 볼트 간의 wikilink를 생성하여
 BFS 도달성을 확보한다.
 
-사용법:
+Usage:
   python crosslink_jira.py [vault_path] --dry-run   # 미리보기
   python crosslink_jira.py [vault_path] --apply      # 실제 반영
 """
@@ -21,18 +21,18 @@ from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# ── 스킵 키워드 (너무 일반적인 용어) ────────────────────────────────────
+# ── Skip keywords (too generic terms) ────────────────────────────────────
 SKIP_TERMS = frozenset({
     '프로젝트', '작업', '이슈', '기획', '개발', '아트', '테스트', '구현',
     '수정', '추가', '관련', '정리', '목록', '문서', '확인', '내용', '결과',
-    '진행', '완료', '검토', '요청', '반영', '변경', '적용', '정리',
+    '진행', 'Complete', '검토', '요청', '반영', '변경', '적용', '정리',
     '필요', '처리', '예정', '참고', '기타', '기능', '상태', '현황',
 })
 
 # Confluence ID 패턴: 숫자_로 시작하는 접두사
 CONFLUENCE_ID_RE = re.compile(r'^\d{6,}_')
 
-# 프론트매터 분리
+# Separate frontmatter
 def split_frontmatter(content: str) -> tuple:
     """(frontmatter_str, body_str) 반환. frontmatter 없으면 ('', content)."""
     if content.startswith('---'):
@@ -73,11 +73,11 @@ def update_related_fm(fm: str, new_stems: list) -> str:
     # related 필드가 없으면 tags 뒤에 삽입
     if 'tags:' in fm:
         return re.sub(r'(tags:\s*\[[^\]]*\]\n)', rf'\1related: [{new_val}]\n', fm)
-    # 최후 수단: --- 직전
+    # Last resort: --- 직전
     return fm.rstrip().rstrip('-').rstrip() + f'\nrelated: [{new_val}]\n---\n'
 
 
-# ── 키워드 추출 ────────────────────────────────────────────────────────
+# ── Keyword extraction ────────────────────────────────────────────────────────
 
 def extract_tokens_from_stem(stem: str) -> list:
     """파일 stem에서 의미 있는 토큰 추출.
@@ -90,13 +90,13 @@ def extract_tokens_from_stem(stem: str) -> list:
     # 대괄호 내용 보존하면서 괄호 제거
     clean = clean.replace('[', ' ').replace(']', ' ')
     clean = clean.replace('(', ' ').replace(')', ' ')
-    # 구분자 기준 분리
+    # Split by delimiters
     parts = re.split(r'[_\s\-./·,]+', clean)
     tokens = []
     for p in parts:
         p = p.strip()
         if len(p) >= 2 and p not in SKIP_TERMS:
-            # 숫자만인 토큰 스킵
+            # Skip numeric-only tokens
             if re.match(r'^\d+$', p):
                 continue
             tokens.append(p)
@@ -234,7 +234,7 @@ def append_section(content: str, heading: str, links: list) -> str:
         return content.rstrip() + block
 
 
-# ── 메인 로직 ──────────────────────────────────────────────────────────
+# ── Main 로직 ──────────────────────────────────────────────────────────
 
 def collect_jira_files(jira_dir: Path) -> list:
     """Jira 디렉토리에서 모든 MD 파일 수집 (Epic, Release, attachments_md)."""
@@ -314,7 +314,7 @@ def run(vault_path: Path, dry_run: bool = True):
         stats['jira_linked'] += 1
         stats['links_jira_to_active'] += len(top_stems)
 
-        # 역방향 매핑 (active → jira, max 5는 나중에 적용)
+        # Reverse mapping (active → jira, max 5는 나중에 적용)
         jira_stem = jira_md.stem
         # jira 파일이 attachments_md 안에 있으면 경로 포함
         if jira_md.parent.name == 'attachments_md':
@@ -326,7 +326,7 @@ def run(vault_path: Path, dry_run: bool = True):
             active_to_jira[active_stem].append((jira_link, jira_stem))
 
     print(f"  → 매칭된 Jira 파일: {stats['jira_linked']}개")
-    print(f"  → Jira→Active 링크: {stats['links_jira_to_active']}개")
+    print(f"  → Jira→Active Links: {stats['links_jira_to_active']}개")
     print()
 
     # 3) Jira 파일에 ## 관련 문서 주입 + related frontmatter 업데이트
@@ -342,7 +342,7 @@ def run(vault_path: Path, dry_run: bool = True):
         # frontmatter related 업데이트
         new_fm = update_related_fm(fm, active_stems)
 
-        # ## 관련 문서 섹션 추가
+        # ## Add Related Documents section
         new_body = append_section(body, '## 관련 문서', active_stems)
 
         new_content = new_fm + new_body
@@ -431,7 +431,7 @@ def run(vault_path: Path, dry_run: bool = True):
     print(f"Active→Jira 링크 수:      {stats['links_active_to_jira']}")
     print(f"수정된 Active 파일:        {stats['active_files_modified']}")
     print(f"_index.md 업데이트:        {'예' if index_updated else '아니오'}")
-    print(f"총 주입 링크:              {stats['links_jira_to_active'] + stats['links_active_to_jira']}")
+    print(f"총 주입 Links:              {stats['links_jira_to_active'] + stats['links_active_to_jira']}")
     print("=" * 50)
 
     if dry_run:
@@ -447,8 +447,8 @@ def main():
         help='refined_vault 루트 경로 (기본: c:/dev2/refined_vault)'
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--dry-run', action='store_true', help='미리보기 (파일 변경 없음)')
-    group.add_argument('--apply', action='store_true', help='실제 반영')
+    group.add_argument('--dry-run', action='store_true', help='Preview (no file changes)')
+    group.add_argument('--apply', action='store_true', help='Apply changes')
 
     args = parser.parse_args()
     vault = Path(args.vault_path)

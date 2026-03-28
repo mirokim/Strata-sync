@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-enhance_wikilinks.py — §7 Wiki 링크 1차 강화
-- §7.1 클러스터 링크 주입: 동일 태그 파일 간 ## 관련 문서 섹션 생성
-- §7.2 제목 매칭 링크: 본문 내 다른 파일 제목 텍스트 → [[wikilink]] 변환
-       (placeholder 방식 필수 — v1 버그 방지)
+enhance_wikilinks.py — §7 Wikilink primary enhancement
+- §7.1 Cluster links injected: 동일 태그 파일 간 ## 관련 문서 섹션 생성
+- §7.2 제목 매칭 Links: 본문 내 다른 파일 제목 텍스트 → [[wikilink]] 변환
+       (placeholder approach required — prevents v1 bug)
 
-사용법:
+Usage:
   python enhance_wikilinks.py <active_dir> [--max-cluster 8]
 """
 
@@ -17,7 +17,7 @@ from collections import defaultdict
 
 
 def parse_tags(content: str) -> list:
-    """frontmatter tags 필드 파싱."""
+    """Parse frontmatter tags field."""
     m = re.search(r'tags:\s*\[([^\]]*)\]', content[:500])
     if not m:
         return []
@@ -42,7 +42,7 @@ def get_stem_title_map(active_dir: Path) -> dict:
 
 def cluster_links(active_dir: Path, max_per_cluster: int = 8):
     """§7.1 동일 태그 클러스터 링크 주입."""
-    print("클러스터 링크 구축 중...")
+    print("Building cluster links...")
     stem_map = get_stem_title_map(active_dir)
 
     # 태그 → 파일 목록
@@ -66,7 +66,7 @@ def cluster_links(active_dir: Path, max_per_cluster: int = 8):
         if not tags:
             continue
 
-        # 관련 파일 수집 (동일 태그 공유, 자기 자신 제외)
+        # Collect related files (shared tags, excluding self)
         related = set()
         for tag in tags:
             peers = tag_files.get(tag, [])
@@ -74,21 +74,21 @@ def cluster_links(active_dir: Path, max_per_cluster: int = 8):
                 if peer != stem:
                     related.add(peer)
 
-        # 너무 많으면 날짜 기준 최신 우선으로 제한
+        # If too many, limit to most recent by date
         if len(related) > max_per_cluster:
-            # 날짜 기준 정렬 (stem_map에서 날짜는 없지만 파일명으로 근사)
+            # Sort by date (dates not available in stem_map, approximate by filename)
             related = set(sorted(related, reverse=True)[:max_per_cluster])
 
         if not related:
             skipped += 1
             continue
 
-        # 이미 ## 관련 문서 섹션이 있으면 기존 링크와 병합
+        # If ## Related Documents section exists, merge with existing links
         new_links = [f"- [[{r}]]" for r in sorted(related)]
         new_links_text = '\n'.join(new_links)
 
         if '## 관련 문서' in content:
-            # 기존 섹션에 새 링크 추가 (중복 제거)
+            # Add new links to existing section (deduplicated)
             existing_links = set(re.findall(r'\[\[([^\]]+)\]\]', content))
             filtered_new = [f"- [[{r}]]" for r in sorted(related)
                            if r not in existing_links]
@@ -102,8 +102,8 @@ def cluster_links(active_dir: Path, max_per_cluster: int = 8):
         md.write_text(content, encoding='utf-8')
         injected += 1
 
-    print(f"  클러스터 링크 주입: {injected}개 파일")
-    print(f"  스킵 (태그 없음): {skipped}개 파일")
+    print(f"  Cluster links injected: {injected} files")
+    print(f"  Skipped (no tags): {skipped} files")
     return injected
 
 
@@ -113,10 +113,10 @@ def title_match_links(active_dir: Path):
     본문에 다른 파일의 제목이 텍스트로 등장하면 [[wikilink]] 변환.
     placeholder 방식으로 기존 링크 보호.
     """
-    print("\n제목 매칭 링크 구축 중...")
+    print("\nBuilding title matching links...")
     stem_map = get_stem_title_map(active_dir)
 
-    # 짧거나 너무 흔한 제목은 제외 (오탐 방지)
+    # Exclude short or too common titles (prevent false positives)
     # 길이 8자 이상, 숫자만인 경우 제외
     candidates = {}
     for stem, (title, tags, path) in stem_map.items():
@@ -137,7 +137,7 @@ def title_match_links(active_dir: Path):
 
         current_stem = md.stem
 
-        # frontmatter 분리
+        # Separate frontmatter
         fm_end = content.find('\n---\n', 4)
         if fm_end == -1:
             body = content
@@ -201,17 +201,17 @@ def title_match_links(active_dir: Path):
             md.write_text(fm + body_protected, encoding='utf-8')
             injected += 1
 
-    print(f"  제목 매칭 링크 주입: {injected}개 파일")
+    print(f"  Title matching links injected: {injected} files")
     return injected
 
 
 def main():
     parser = argparse.ArgumentParser(description='위키링크 1차 강화 (§7)')
-    parser.add_argument('active_dir', help='active/ 폴더')
+    parser.add_argument('active_dir', help='active/ folder')
     parser.add_argument('--max-cluster', type=int, default=8,
-                        help='클러스터당 최대 링크 수 (기본: 8)')
+                        help='Max links per cluster (default: 8)')
     parser.add_argument('--skip-title-match', action='store_true',
-                        help='제목 매칭 링크 주입 건너뜀')
+                        help='Skip title matching link injection')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
@@ -225,9 +225,9 @@ def main():
     else:
         n2 = 0
 
-    print(f"\n=== §7 위키링크 1차 강화 완료 ===")
-    print(f"  클러스터 링크: {n1}개 파일")
-    print(f"  제목 매칭:    {n2}개 파일")
+    print(f"\n=== §7 위키링크 1차 강화 Complete ===")
+    print(f"  클러스터 Links: {n1} files")
+    print(f"  Title matching:    {n2} files")
 
 
 if __name__ == '__main__':

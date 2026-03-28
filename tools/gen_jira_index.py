@@ -49,5 +49,5 @@ content = '\n'.join(lines)
 out = os.path.join(jira_dir, 'jira_index.md')
 with open(out, 'w', encoding='utf-8') as f:
     f.write(content)
-print('생성:', out)
-print(f'링크: Epic {len(epics)} + Release {len(releases)} + 첨부문서 {len(att_md)}')
+print('Generated:', out)
+print(f'Links: Epic {len(epics)} + Release {len(releases)} + 첨부문서 {len(att_md)}')

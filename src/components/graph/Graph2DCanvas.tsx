@@ -134,7 +134,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
       ctx.fillStyle = lightFactor > 0.01 ? lightenColor(color, lightFactor) : color
 
       if (nodeData.isImage) {
-        // 이미지 노드: 다이아몬드(마름모) 형태
+        // Image node: diamond shape
         const r = isSelected ? nr + 2 : Math.max(nr - 1, 2)
         ctx.save()
         ctx.translate(simNode.x, simNode.y)
@@ -271,7 +271,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
       scale: targetScale,
     }
     drawCanvas()
-    setFocusNode(null)  // 소비 후 리셋
+    setFocusNode(null)  // Reset after consuming
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusNodeId])
 
@@ -343,7 +343,7 @@ export default function Graph2DCanvas({ width, height }: Props) {
     const node = hitTest(e.clientX, e.clientY)
     if (node) {
       setSelectedNode(node.id)
-      // 노드의 시뮬레이션 좌표 → 화면 좌표로 변환 (pan/zoom 적용)
+      // Convert node simulation coordinates to screen coordinates (with pan/zoom)
       const canvas = canvasRef.current
       const rect = canvas?.getBoundingClientRect()
       const { x: tx, y: ty, scale } = viewRef.current

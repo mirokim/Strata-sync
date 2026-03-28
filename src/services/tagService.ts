@@ -1,11 +1,11 @@
 /**
  * tagService.ts
  *
- * AI 태그 제안: 문서 파일명 + 내용(첫 300자)을 설정된 모델로 분석하여
- * 사용자가 정의한 tagPresets 목록 내에서 적합한 태그를 JSON 배열로 반환한다.
- * 확신이 없으면 빈 배열([])을 반환 → 사이드바에서 "미분류"로 표시됨.
+ * AI tag suggestion: Analyzes document filename + content (first 300 chars) using the configured model
+ * and returns suitable tags from the user-defined tagPresets list as a JSON array.
+ * Returns an empty array ([]) when uncertain — displayed as "uncategorized" in the sidebar.
  *
- * 지원 provider: anthropic, openai, gemini, grok
+ * Supported providers: anthropic, openai, gemini, grok
  */
 
 import matter from 'gray-matter'
@@ -13,13 +13,13 @@ import type { LoadedDocument } from '@/types'
 import { useSettingsStore, getApiKey } from '@/stores/settingsStore'
 import { getWorkerModelId } from '@/services/llmClient'
 
-const SYSTEM_PROMPT = `당신은 문서 분류 전문가입니다.
-주어진 문서에 대해 제공된 태그 목록 중 적합한 것만 골라 JSON 배열로만 응답하세요.
-응답은 반드시 유효한 JSON 배열 형태여야 합니다. 예: ["전투", "스킬"]
-확신이 없으면 빈 배열 []을 반환하세요.
-설명이나 다른 텍스트는 절대 포함하지 마세요.`
+const SYSTEM_PROMPT = `You are a document classification expert.
+From the provided tag list, select only the appropriate tags for the given document and respond with a JSON array only.
+Your response must be a valid JSON array. Example: ["combat", "skill"]
+If unsure, return an empty array [].
+Do not include any explanation or other text.`
 
-/** provider에 맞는 streamCompletion을 호출하고 전체 응답 문자열을 반환한다. */
+/** Calls streamCompletion for the given provider and returns the full response string. */
 async function callStream(
   provider: string,
   apiKey: string,
@@ -51,8 +51,8 @@ async function callStream(
 }
 
 /**
- * 주어진 문서에 적합한 태그를 AI로 제안한다.
- * tagPresets가 비어있거나 API 키가 없으면 즉시 [] 반환.
+ * Suggests suitable tags for a given document using AI.
+ * Returns [] immediately if tagPresets is empty or no API key is available.
  */
 export async function suggestTagsForDoc(
   docFilename: string,
@@ -71,13 +71,13 @@ export async function suggestTagsForDoc(
   if (!apiKey) return []
 
   const contentPreview = docContent.replace(/^---[\s\S]*?---\n*/m, '').slice(0, 300)
-  const userMessage = `파일명: ${docFilename}
-내용 (앞부분):
+  const userMessage = `Filename: ${docFilename}
+Content (beginning):
 ${contentPreview}
 
-허용 태그 목록: ${tagPresets.join(', ')}
+Allowed tag list: ${tagPresets.join(', ')}
 
-이 문서에 적합한 태그를 위 목록에서만 골라 JSON 배열로 반환하세요.`
+Select suitable tags for this document only from the above list and return as a JSON array.`
 
   let result = ''
   try {
@@ -86,7 +86,7 @@ ${contentPreview}
     return []
   }
 
-  // JSON 배열 파싱 + tagPresets에 있는 태그만 필터
+  // Parse JSON array + filter only tags that exist in tagPresets
   try {
     const match = result.match(/\[[\s\S]*\]/)
     if (!match) return []
@@ -101,22 +101,22 @@ ${contentPreview}
 }
 
 const SPEAKER_OPTIONS = [
-  { id: 'chief_director',  desc: '총괄 기획/디렉션 문서' },
-  { id: 'art_director',    desc: '아트/디자인 관련 문서' },
-  { id: 'plan_director',   desc: '기획/레벨 디자인 문서' },
-  { id: 'level_director',  desc: '레벨/맵 설계 문서' },
-  { id: 'prog_director',   desc: '프로그래밍/기술 문서' },
+  { id: 'chief_director',  desc: 'Overall planning/direction documents' },
+  { id: 'art_director',    desc: 'Art/design related documents' },
+  { id: 'plan_director',   desc: 'Planning/level design documents' },
+  { id: 'level_director',  desc: 'Level/map design documents' },
+  { id: 'prog_director',   desc: 'Programming/technical documents' },
 ]
 
-const SPEAKER_SYSTEM = `당신은 문서 담당자 분류 전문가입니다.
-주어진 문서에 가장 적합한 담당 역할을 아래 목록에서 하나만 골라 ID만 응답하세요.
-목록:
+const SPEAKER_SYSTEM = `You are a document owner classification expert.
+Select the most appropriate role for the given document from the list below and respond with the ID only.
+List:
 ${SPEAKER_OPTIONS.map(s => `- ${s.id}: ${s.desc}`).join('\n')}
-응답은 반드시 위 ID 중 하나만, 한 줄로 반환하세요. 설명 없이 ID만.`
+Your response must be exactly one of the above IDs, on a single line. ID only, no explanation.`
 
 /**
- * 문서에 가장 적합한 speaker(페르소나) ID를 AI로 제안한다.
- * 실패 시 null 반환.
+ * Suggests the most suitable speaker (persona) ID for a document using AI.
+ * Returns null on failure.
  */
 export async function suggestSpeakerForDoc(
   docFilename: string,
@@ -133,7 +133,7 @@ export async function suggestSpeakerForDoc(
   if (!apiKey) return null
 
   const contentPreview = docContent.replace(/^---[\s\S]*?---\n*/m, '').slice(0, 400)
-  const userMessage = `파일명: ${docFilename}\n내용:\n${contentPreview}\n\n가장 적합한 담당 역할 ID를 반환하세요.`
+  const userMessage = `Filename: ${docFilename}\nContent:\n${contentPreview}\n\nReturn the most appropriate role ID.`
 
   try {
     const result = await callStream(provider, apiKey, modelId, userMessage, SPEAKER_SYSTEM)
@@ -144,7 +144,7 @@ export async function suggestSpeakerForDoc(
   }
 }
 
-// YAML frontmatter의 tags 필드를 업데이트한 전체 문자열을 반환한다.
+// Returns the full string with the YAML frontmatter tags field updated.
 function applyTagsToContent(rawContent: string, newTags: string[]): string {
   const trimmed = rawContent.trimStart()
   if (!trimmed.startsWith('---')) {
@@ -165,9 +165,9 @@ export interface BulkTagProgress {
 }
 
 /**
- * vault 전체 문서에 AI 태그를 일괄 지정한다.
- * 각 문서마다 suggestTagsForDoc 호출 → 태그가 있으면 frontmatter 업데이트 후 저장.
- * 태그가 없거나 오류 시 해당 문서는 건너뜀 (기존 태그 보존).
+ * Bulk-assigns AI tags to all documents in the vault.
+ * Calls suggestTagsForDoc for each document — updates frontmatter and saves if tags are returned.
+ * Skips documents with no tags or errors (preserves existing tags).
  */
 export async function bulkAssignTagsToAllDocs(
   docs: LoadedDocument[],

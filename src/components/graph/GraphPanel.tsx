@@ -21,12 +21,12 @@ import {
 import { streamMessage } from '@/services/llmClient'
 
 const COLOR_MODES: { mode: NodeColorMode; label: string }[] = [
-  { mode: 'document', label: '문서' },
-  { mode: 'auto',     label: '자동' },
-  { mode: 'speaker',  label: '역할' },
-  { mode: 'folder',   label: '폴더' },
-  { mode: 'tag',      label: '태그' },
-  { mode: 'topic',    label: '주제' },
+  { mode: 'document', label: 'Document' },
+  { mode: 'auto',     label: 'Auto' },
+  { mode: 'speaker',  label: 'Role' },
+  { mode: 'folder',   label: 'Folder' },
+  { mode: 'tag',      label: 'Tag' },
+  { mode: 'topic',    label: 'Topic' },
 ]
 
 
@@ -34,7 +34,7 @@ interface AnalysisState {
   nodeName: string
   content: string
   loading: boolean
-  phase?: '탐색 중' | '분석 중'
+  phase?: 'Exploring' | 'Analyzing'
 }
 
 const FLOAT_BTN_STYLE: React.CSSProperties = { background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 2, padding: '5px 7px', cursor: 'pointer', lineHeight: 1, transition: 'color 0.15s' }
@@ -56,12 +56,12 @@ export default function GraphPanel() {
   const abortRef = useRef<(() => void) | null>(null)
   const [showRagPreview, setShowRagPreview] = useState(false)
 
-  // ── 노드 검색 ──────────────────────────────────────────────────────────────
+  // ── Node search ──────────────────────────────────────────────────────────────
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  // 검색어 기반 후보 노드 (label 기준, 최대 8개)
+  // Candidate nodes based on search query (by label, max 8)
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return []
@@ -71,7 +71,7 @@ export default function GraphPanel() {
       .slice(0, 8)
   }, [searchQuery, nodes])
 
-  // 검색창 열릴 때 포커스
+  // Focus when search opens
   useEffect(() => {
     if (showSearch) {
       const t = setTimeout(() => searchInputRef.current?.focus(), 50)
@@ -81,7 +81,7 @@ export default function GraphPanel() {
     }
   }, [showSearch])
 
-  // Ctrl+F / Cmd+F 단축키
+  // Ctrl+F / Cmd+F shortcut
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -120,13 +120,13 @@ export default function GraphPanel() {
   }, [])
 
   const handleAnalyze = useCallback(async () => {
-    // 이미 로딩 중이면 중복 실행 방지
+    // Prevent duplicate execution if already loading
     if (analysisRef.current?.loading) return
-    // 진행 중인 분석 중단 + 이전 하이라이트 클리어
+    // Abort in-progress analysis + clear previous highlights
     abortRef.current?.()
     setAiHighlightNodes([])
 
-    // 노드 선택 O: 해당 노드 중심 BFS / 노드 선택 X: 허브 기반 전체 탐색
+    // Node selected: BFS centered on that node / No selection: hub-based full exploration
     let context: string
     let nodeName: string
 
@@ -136,35 +136,35 @@ export default function GraphPanel() {
       context = await buildDeepGraphContextFromDocId(selectedNodeId)
       setAiHighlightNodes(getBfsContextDocIds(selectedNodeId))
     } else {
-      nodeName = '전체 프로젝트'
+      nodeName = 'Entire Project'
       context = await buildGlobalGraphContext(35, 4)
       setAiHighlightNodes(getGlobalContextDocIds(35, 4))
     }
 
     if (!context) {
       setAiHighlightNodes([])
-      setAnalysis({ nodeName, content: '볼트가 로드되었는지 확인하세요. 문서가 없거나 연결이 없습니다.', loading: false })
+      setAnalysis({ nodeName, content: 'Please check if the vault is loaded. No documents or connections found.', loading: false })
       return
     }
 
-    // Phase 1: 그래프 탐색 완료 표시 (BFS는 동기 즉시 완료됨)
-    setAnalysis({ nodeName, content: '', loading: true, phase: '탐색 중' })
+    // Phase 1: Graph exploration complete indicator (BFS completes synchronously)
+    setAnalysis({ nodeName, content: '', loading: true, phase: 'Exploring' })
 
     let aborted = false
     abortRef.current = () => { aborted = true }
 
-    // 짧은 딜레이로 "탐색 중" 상태를 UI에 한 프레임 렌더링
+    // Short delay to render "Exploring" state for one frame in UI
     await new Promise<void>(r => setTimeout(r, 60))
     if (aborted) return
 
-    // Phase 2: LLM 인사이트 생성
-    setAnalysis(prev => prev ? { ...prev, phase: '분석 중' } : null)
+    // Phase 2: LLM insight generation
+    setAnalysis(prev => prev ? { ...prev, phase: 'Analyzing' } : null)
 
-    // 페르소나에서 기본 디렉터 선택 (첫 번째 설정된 것)
+    // Select default director from personas (first configured one)
     const persona = (Object.keys(personaModels)[0] ?? 'chief_director') as Parameters<typeof streamMessage>[0]
     const prompt = selectedNodeId
-      ? `"${nodeName}" 문서와 WikiLink로 연결된 모든 관련 노드들을 검토하고, 핵심 인사이트와 개선 포인트를 구체적으로 분석해주세요.`
-      : `볼트 전체 문서 구조와 연결 관계를 검토하고, 프로젝트 전반의 핵심 인사이트, 공백 영역, 개선 방향을 구체적으로 분석해주세요.`
+      ? `Review the "${nodeName}" document and all related nodes connected via WikiLinks, and provide specific analysis of key insights and improvement points.`
+      : `Review the entire vault document structure and connection relationships, and provide specific analysis of key insights, gap areas, and improvement directions across the project.`
 
     try {
       await streamMessage(
@@ -182,8 +182,8 @@ export default function GraphPanel() {
       if (!aborted) {
         setAnalysis(prev => {
           if (!prev) return null
-          // 청크 수신 전 에러라면 content가 빈 문자열일 수 있음 — append 대신 직접 설정
-          const msg = '[오류가 발생했습니다]'
+          // If error occurs before any chunks, content may be empty — set directly instead of appending
+          const msg = '[An error occurred]'
           return { ...prev, content: prev.content ? prev.content + '\n\n' + msg : msg, loading: false, phase: undefined }
         })
         setAiHighlightNodes([])
@@ -203,7 +203,7 @@ export default function GraphPanel() {
     setAnalysis(null)
   }, [setAiHighlightNodes])
 
-  // 선택 노드가 바뀌면 이전 분석 닫기
+  // Close previous analysis when selected node changes
   useEffect(() => {
     if (analysis && analysis.nodeName) closeAnalysis()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -214,7 +214,7 @@ export default function GraphPanel() {
     : null
   const selectedName = selectedDoc?.filename.replace(/\.md$/i, '') ?? selectedNodeId
 
-  // 비교 볼트 그래프 데이터
+  // Compare vault graph data
   const compareGraph = useMemo(() => {
     if (!compareVaultId) return null
     const docs = vaultDocsCache[compareVaultId]
@@ -229,7 +229,7 @@ export default function GraphPanel() {
     ? (vaults[activeVaultId]?.label || vaults[activeVaultId]?.path.split(/[/\\]/).pop() || '')
     : ''
 
-  // 비교 볼트 선택 목록 (현재 활성 볼트 제외)
+  // Compare vault selection list (excluding current active vault)
   const compareOptions = Object.entries(vaults).filter(([id]) => id !== activeVaultId)
 
   const halfWidth = compareVaultId ? Math.floor(size.width / 2) : size.width
@@ -239,7 +239,7 @@ export default function GraphPanel() {
       {size.width > 0 && size.height > 0 && (
         compareVaultId && compareGraph ? (
           <div style={{ display: 'flex', width: '100%', height: '100%' }}>
-            {/* 왼쪽: 현재 활성 볼트 */}
+            {/* Left: current active vault */}
             <div style={{ flex: 1, position: 'relative', borderRight: '1px solid var(--color-border)' }}>
               {isFast
                 ? <Graph2DCanvas width={halfWidth} height={size.height} />
@@ -251,7 +251,7 @@ export default function GraphPanel() {
                 {activeLabel}
               </div>
             </div>
-            {/* 오른쪽: 비교 볼트 */}
+            {/* Right: compare vault */}
             <div style={{ flex: 1, position: 'relative' }}>
               <CompareGraphCanvas
                 nodes={compareGraph.nodes}
@@ -284,7 +284,7 @@ export default function GraphPanel() {
               ...FLOAT_BTN_STYLE,
               color: nodeColorMode !== 'speaker' ? 'var(--color-accent)' : 'var(--color-text-muted)',
             }}
-            title={`노드 색상: ${COLOR_MODES.find(m => m.mode === nodeColorMode)?.label}`}
+            title={`Node color: ${COLOR_MODES.find(m => m.mode === nodeColorMode)?.label}`}
             aria-label="Node color mode"
           >
             <Palette size={12} />
@@ -325,14 +325,14 @@ export default function GraphPanel() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {label}별 색상
+                  Color by {label}
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* AI 분석 버튼 — 항상 표시 (노드 선택 O: 노드 중심 / X: 전체 프로젝트) */}
+        {/* AI analysis button — always shown (node selected: node-centered / none: entire project) */}
         <div style={{ position: 'relative' }}>
           <button
             onClick={handleAnalyze}
@@ -350,18 +350,18 @@ export default function GraphPanel() {
               opacity: analysis?.loading ? 0.6 : 1,
             }}
             title={selectedNodeId
-              ? `"${selectedName}" 노드와 연결된 문서를 AI로 분석`
-              : '전체 프로젝트 문서를 AI로 분석 (허브 노드 기반)'
+              ? `Analyze documents connected to "${selectedName}" node with AI`
+              : 'Analyze entire project documents with AI (hub node based)'
             }
           >
             {analysis?.loading
               ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
               : <Sparkles size={11} />
             }
-            {selectedNodeId ? 'AI 분석' : 'AI 전체 분석'}
+            {selectedNodeId ? 'AI Analysis' : 'AI Full Analysis'}
           </button>
 
-          {/* RAG 컨텍스트 미리보기 */}
+          {/* RAG context preview */}
           {showRagPreview && !analysis?.loading && (() => {
             const previewIds = selectedNodeId
               ? getBfsContextDocIds(selectedNodeId)
@@ -379,7 +379,7 @@ export default function GraphPanel() {
                 pointerEvents: 'none',
               }}>
                 <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                  RAG 컨텍스트 ({previewDocs.length}개)
+                  RAG Context ({previewDocs.length})
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 180, overflowY: 'auto' }}>
                   {previewDocs.map(d => (
@@ -393,7 +393,7 @@ export default function GraphPanel() {
           })()}
         </div>
 
-        {/* 볼트 인사이트 버튼 */}
+        {/* Vault insight button */}
         <button
           onClick={() => setShowInsights(v => !v)}
           style={{
@@ -401,13 +401,13 @@ export default function GraphPanel() {
             color: showInsights ? 'var(--color-accent)' : 'var(--color-text-muted)',
             display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '5px 10px',
           }}
-          title="볼트 그래프 인사이트 — 허브, 고립, 빈틈, 클러스터 분석"
+          title="Vault graph insights — hubs, isolates, gaps, cluster analysis"
         >
           <Lightbulb size={11} />
-          인사이트
+          Insights
         </button>
 
-        {/* 노드 검색 버튼 */}
+        {/* Node search button */}
         <button
           onClick={() => setShowSearch(v => !v)}
           style={{
@@ -415,13 +415,13 @@ export default function GraphPanel() {
             color: showSearch ? 'var(--color-accent)' : 'var(--color-text-muted)',
             display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '5px 10px',
           }}
-          title="노드 검색 (Ctrl+F)"
+          title="Search nodes (Ctrl+F)"
         >
           <Search size={11} />
-          검색
+          Search
         </button>
 
-        {/* 비교 뷰 버튼 — 등록된 볼트 2개 이상일 때 표시 */}
+        {/* Compare view button — shown when 2+ vaults are registered */}
         {compareOptions.length > 0 && (
           <div style={{ position: 'relative' }}>
             <button
@@ -431,10 +431,10 @@ export default function GraphPanel() {
                 color: compareVaultId ? 'var(--color-accent)' : 'var(--color-text-muted)',
                 display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '5px 10px',
               }}
-              title={compareVaultId ? '비교 뷰 닫기' : '볼트 비교 뷰'}
+              title={compareVaultId ? 'Close compare view' : 'Vault compare view'}
             >
               <Columns size={11} />
-              비교
+              Compare
             </button>
             {compareOptions.length > 1 && compareVaultId && (
               <div style={{
@@ -466,7 +466,7 @@ export default function GraphPanel() {
         )}
       </div>
 
-      {/* 노드 검색 패널 */}
+      {/* Node search panel */}
       {showSearch && (
         <div style={{
           position: 'absolute',
@@ -487,7 +487,7 @@ export default function GraphPanel() {
               ref={searchInputRef}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="노드 이름 검색…"
+              placeholder="Search node name..."
               style={{
                 flex: 1,
                 background: 'transparent',
@@ -531,17 +531,17 @@ export default function GraphPanel() {
           )}
           {searchQuery.trim() && searchResults.length === 0 && (
             <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--color-text-muted)' }}>
-              결과 없음
+              No results
             </div>
           )}
         </div>
       )}
 
-      {/* Insights 패널 */}
+      {/* Insights panel */}
       {showInsights && <InsightsPanel onClose={() => setShowInsights(false)} />}
       {!isFast && <GraphMinimap />}
 
-      {/* AI 분석 결과 패널 */}
+      {/* AI analysis results panel */}
       {analysis && (
         <div
           style={{
@@ -559,7 +559,7 @@ export default function GraphPanel() {
             boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
           }}
         >
-          {/* 패널 헤더 */}
+          {/* Panel header */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -573,8 +573,8 @@ export default function GraphPanel() {
               {analysis.nodeName}
             </span>
             {analysis.loading && (
-              <span style={{ fontSize: 10, color: analysis.phase === '탐색 중' ? 'var(--color-text-secondary)' : 'var(--color-text-muted)' }}>
-                {analysis.phase ?? '분석 중'}…
+              <span style={{ fontSize: 10, color: analysis.phase === 'Exploring' ? 'var(--color-text-secondary)' : 'var(--color-text-muted)' }}>
+                {analysis.phase ?? 'Analyzing'}...
               </span>
             )}
             <button
@@ -587,7 +587,7 @@ export default function GraphPanel() {
             </button>
           </div>
 
-          {/* 분석 내용 */}
+          {/* Analysis content */}
           <div style={{
             flex: 1,
             overflowY: 'auto',
@@ -598,10 +598,10 @@ export default function GraphPanel() {
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
           }}>
-            {analysis.content || (analysis.loading ? '' : '분석 내용 없음')}
+            {analysis.content || (analysis.loading ? '' : 'No analysis content')}
             {analysis.loading && !analysis.content && (
               <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                노드 연결을 탐색 중입니다…
+                Exploring node connections...
               </span>
             )}
           </div>

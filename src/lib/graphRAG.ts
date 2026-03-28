@@ -56,17 +56,17 @@ export interface NeighborContext {
 
 /**
  * Tokenize a Korean/English query string into search stems.
- * graphAnalysis.tokenize 위임 — 한국어 조사 제거 포함.
+ * Delegates to graphAnalysis.tokenize — includes Korean particle stripping.
  * Exported so llmClient.ts can pass query terms to context builders.
  */
 export function tokenizeQuery(text: string): string[] {
   return _tokenize(text)
 }
 
-// ── Generic heading filter (PPTX/PDF 슬라이드/페이지 헤딩 노이즈 제거) ──────
+// ── Generic heading filter (PPTX/PDF slide/page heading noise removal) ──────
 const GENERIC_HEADING_RE = /^(슬라이드|페이지|slide|page)\s*\d+$/i
 
-/** 검색 스코어링에 기여하지 않는 제너릭 헤딩을 빈 문자열로 치환 */
+/** Replace generic headings that don't contribute to search scoring with empty string */
 function headingForScore(heading: string): string {
   return GENERIC_HEADING_RE.test(heading.trim()) ? '' : heading
 }
@@ -75,7 +75,7 @@ function headingForScore(heading: string): string {
 
 const ARCHIVE_PATH_RE = /(?:^|[\\/])\.?archive[\\/]/i
 
-/** 문서가 아카이브 또는 outdated/deprecated 상태인지 판별 */
+/** Determine if a document is in archive or outdated/deprecated state */
 function isOutdatedDoc(doc: { status?: string; folderPath?: string; absolutePath?: string } | undefined): boolean {
   if (!doc) return false
   if (doc.status === 'outdated' || doc.status === 'deprecated') return true
@@ -133,18 +133,18 @@ function buildSectionMap(
   return map
 }
 
-// ── 0. Frontend search (TF-IDF 우선, 키워드 폴백) ──────────────────────────
+// ── 0. Frontend search (TF-IDF first, keyword fallback) ──────────────────────
 
 /**
- * 볼트 문서를 검색합니다.
+ * Searches vault documents.
  *
- * 파이프라인:
- *   1. TF-IDF 코사인 유사도 검색 (tfidfIndex가 빌드된 경우)
- *      — 의미적으로 가까운 문서를 찾아 제목 미스매치 문제 해결
- *   2. TF-IDF 결과가 없으면 키워드 기반 폴백 검색
+ * Pipeline:
+ *   1. TF-IDF cosine similarity search (when tfidfIndex is built)
+ *      — finds semantically close documents, resolving title mismatch issues
+ *   2. Falls back to keyword-based search when TF-IDF yields no results
  *
- * @param query  사용자 쿼리
- * @param topN   반환할 최대 결과 수
+ * @param query  User query
+ * @param topN   Maximum number of results to return
  */
 export function frontendKeywordSearch(
   query: string,
@@ -163,14 +163,14 @@ export function frontendKeywordSearch(
   const personaTag = currentSpeaker ? PERSONA_TAG_MAP[currentSpeaker] : undefined
   const TAG_BOOST = 0.1
 
-  // ── TF-IDF 우선 검색 ──────────────────────────────────────────────────────
+  // ── TF-IDF priority search ──────────────────────────────────────────────────
   if (tfidfIndex.isBuilt) {
     const tfidfHits = tfidfIndex.search(query, topN * 2)  // over-fetch for tag re-sort
     if (tfidfHits.length > 0) {
-      const queryStems = tokenizeQuery(query)  // 공유 — map 내부에서 반복 계산하지 않음
+      const queryStems = tokenizeQuery(query)  // shared — avoids repeated computation inside map
       const results = tfidfHits.map(hit => {
         const doc = docMap.get(hit.docId)
-        // 문서 내에서 쿼리와 가장 잘 매칭되는 섹션 선택
+        // Select the section within the document that best matches the query
         let bestSection = doc?.sections.find(s => s.body.trim())
         let bestSectionScore = -1
         if (doc && queryStems.length > 0) {
@@ -189,7 +189,7 @@ export function frontendKeywordSearch(
         const hasPersonaTag = personaTag
           ? tags.some(t => t.toLowerCase() === personaTag)
           : false
-        // outdated/deprecated/archive 문서 패널티
+        // outdated/deprecated/archive document penalty
         const outdatedPenalty = isOutdatedDoc(doc) ? -0.25 : 0
         return {
           doc_id: hit.docId,
@@ -211,7 +211,7 @@ export function frontendKeywordSearch(
     }
   }
 
-  // ── 키워드 폴백 검색 (TF-IDF 인덱스 미빌드 시) ───────────────────────────
+  // ── Keyword fallback search (when TF-IDF index not built) ───────────────────
   const queryStems = tokenizeQuery(query)
   if (queryStems.length === 0) return []
 
@@ -276,10 +276,10 @@ export function frontendKeywordSearch(
 // ── Direct string search (simple grep-style fallback) ────────────────────────
 
 /**
- * 볼트 전체 문서를 쿼리 단어로 직접 문자열 검색합니다.
+ * Directly searches all vault documents by query words (string search).
  *
- * TF-IDF/BFS로 찾지 못한 문서를 보완하는 단순 폴백.
- * 파일명 매칭은 가중치 2배, 본문 매칭은 1배.
+ * Simple fallback to supplement documents not found by TF-IDF/BFS.
+ * Filename match weight 2x, body match weight 1x.
  */
 export function directVaultSearch(
   query: string,
@@ -288,9 +288,9 @@ export function directVaultSearch(
   const { loadedDocuments } = useVaultStore.getState()
   if (!loadedDocuments?.length) return []
 
-  // 토크나이저로 조사·구두점 제거 (한국어 조사 제거 포함, "이사장님의" → "이사장님")
+  // Remove particles/punctuation via tokenizer (includes Korean particle stripping)
   const tokenized = expandTerms(_tokenize(query))
-  // 2자리 이상 숫자 보완: 날짜형 파일명 "[2026.01.28]"의 컴포넌트와 확실히 매칭되도록
+  // Supplement 2+ digit numbers: ensure matching with date-format filename components like "[2026.01.28]"
   const numericTerms = query.match(/\d{2,}/g) ?? []
   const terms = [...new Set([...tokenized, ...numericTerms])]
   if (terms.length === 0) return []
@@ -302,7 +302,7 @@ export function directVaultSearch(
     const filename = doc.filename.toLowerCase()
     const raw = (doc.rawContent ?? '').toLowerCase()
 
-    // 쿼리 단어별 매칭 카운트 (가중치 없이 순수 커버리지)
+    // Per-query-word match count (pure coverage without weighting)
     let filenameHits = 0
     let bodyHits = 0
     for (const term of terms) {
@@ -311,23 +311,23 @@ export function directVaultSearch(
     }
     if (filenameHits === 0 && bodyHits === 0) continue
 
-    // 커버리지 기반 점수: 파일명 60%, 본문 40% — 쿼리 단어 커버리지 비율
+    // Coverage-based score: filename 60%, body 40% — query word coverage ratio
     const n = terms.length
     let score = (filenameHits / n) * 0.6 + (bodyHits / n) * 0.4
 
-    // 파일명 매칭 부스트: BM25 점수(0.9+)와 경쟁 가능하도록 0.5~1.0 범위로 스케일업
+    // Filename match boost: scale up to 0.5-1.0 range to compete with BM25 scores (0.9+)
     if (filenameHits > 0) {
       score = 0.5 + score * 0.5  // 0-1 → 0.5-1.0
     }
 
-    // Recency boost: 최근 문서 가산 — 6개월 이내 ~10%, 1년 지나면 거의 0
+    // Recency boost: bonus for recent docs — ~10% within 6 months, nearly 0 after 1 year
     const docTime = getContentDate(doc)
     if (docTime > 0) {
       const daysOld = (now - docTime) / 86_400_000
       score *= 1 + 0.1 * Math.exp(-daysOld / 180)
     }
 
-    // 쿼리 단어와 가장 많이 겹치는 섹션 선택
+    // Select section with most overlap with query words
     let bestSection: DocSection | null = null
     let bestSectionScore = -1
     for (const section of doc.sections) {
@@ -344,7 +344,7 @@ export function directVaultSearch(
     scored.push({ doc, score, bestSection })
   }
 
-  // 커버리지 점수 기반 정렬 (파일명 절대 우선 제거)
+  // Sort by coverage score (removed filename absolute priority)
   scored.sort((a, b) => b.score - a.score)
 
   return scored.slice(0, topN).map(({ doc, score, bestSection }) => ({
@@ -356,7 +356,7 @@ export function directVaultSearch(
     content: bestSection
       ? (bestSection.body.length > 500 ? bestSection.body.slice(0, 500).trimEnd() + '…' : bestSection.body)
       : '',
-    score,  // 이미 0-1 범위 (커버리지 비율)
+    score,  // already in 0-1 range (coverage ratio)
     tags: doc.tags ?? [],
   } satisfies SearchResult))
 }
@@ -370,7 +370,7 @@ let _cachedMetrics: ReturnType<typeof getGraphMetrics> | null = null
 let _cachedLinksKey: string = ''
 let _cachedDocsKey: string = ''
 
-/** 배열 내용 기반 fingerprint — 길이 + 첫/중간/마지막 ID 샘플 */
+/** Array content-based fingerprint — length + first/middle/last ID samples */
 function arrayKey<T extends { id?: string; source?: unknown; target?: unknown }>(arr: T[]): string {
   const n = arr.length
   if (n === 0) return '0'
@@ -529,7 +529,7 @@ export function rerankResults(
     const pTag = currentSpeaker ? PERSONA_TAG_MAP[currentSpeaker] : undefined
     const tagBoost = pTag && r.tags?.some(t => t.toLowerCase() === pTag) ? 0.15 : 0
 
-    // Outdated/deprecated/archive 패널티 (recency boost는 fetchRAGContext Stage 1에서 이미 처리됨)
+    // Outdated/deprecated/archive penalty (recency boost is already handled in fetchRAGContext Stage 1)
     const outdatedPenalty = isOutdatedDoc(_docMap.get(r.doc_id)) ? -0.3 : 0
 
     const baseScore = rerankVectorWeight * r.score + rerankKeywordWeight * keywordScore
@@ -548,8 +548,8 @@ export function rerankResults(
 const VERSION_RE = /[_\s]v(\d+(?:\.\d+)?)(?:\.md)?$/i
 
 /**
- * 파일명 버전 접미사(_v2, _v3 등)를 파싱하여 동일 문서의 구버전을 제거합니다.
- * 최신 버전 번호가 높은 문서를 유지, 동점이면 frontmatter date가 최신인 것을 유지.
+ * Parses filename version suffixes (_v2, _v3, etc.) to remove older versions of the same document.
+ * Keeps the document with the highest version number; on ties, keeps the one with the most recent frontmatter date.
  */
 export function deduplicateVersions(
   results: SearchResult[],
@@ -565,7 +565,7 @@ export function deduplicateVersions(
   const deduped: SearchResult[] = []
   for (const [, group] of groups) {
     if (group.length <= 1) { deduped.push(group[0]); continue }
-    // 버전 번호 높은 순 → date 최신 순
+    // Higher version number first → then most recent date
     group.sort((a, b) => {
       const va = parseFloat(a.filename.match(VERSION_RE)?.[1] ?? '0')
       const vb = parseFloat(b.filename.match(VERSION_RE)?.[1] ?? '0')
@@ -574,7 +574,7 @@ export function deduplicateVersions(
       const db = docMap.get(b.doc_id)?.date ?? ''
       return db.localeCompare(da)
     })
-    deduped.push(group[0])  // 최신 버전만 유지
+    deduped.push(group[0])  // keep only latest version
   }
   return deduped
 }
@@ -582,17 +582,17 @@ export function deduplicateVersions(
 // ── 3a. Deep graph traversal (BFS) ───────────────────────────────────────────
 
 /**
- * frontmatter YAML이 제거된 문서 본문 텍스트를 반환합니다.
+ * Returns document body text with frontmatter YAML stripped.
  *
- * 우선순위:
- *   1. 섹션 조합 (gray-matter가 이미 frontmatter를 제거한 결과물)
- *   2. rawContent에서 수동으로 frontmatter 제거 (섹션이 모두 비어있을 때)
+ * Priority:
+ *   1. Section combination (result of gray-matter already stripping frontmatter)
+ *   2. Manually strip frontmatter from rawContent (when all sections are empty)
  *
- * rawContent를 그대로 쓰지 않는 이유: rawContent는 YAML frontmatter를 포함하므로
- * AI가 "---\nspeaker: ...\ntags: ..." 등을 실제 내용으로 오독합니다.
+ * Reason for not using rawContent directly: rawContent includes YAML frontmatter,
+ * causing AI to misread "---\nspeaker: ...\ntags: ..." etc. as actual content.
  */
 export function getStrippedBody(doc: LoadedDocument): string {
-  // 단일 패스 — filter+map 중간 배열 없이 직접 누적
+  // Single pass — accumulate directly without filter+map intermediate arrays
   const parts: string[] = []
   for (const s of doc.sections) {
     if (!s.body.trim()) continue
@@ -602,8 +602,8 @@ export function getStrippedBody(doc: LoadedDocument): string {
   const sectionText = parts.join('\n\n').trim()
   if (sectionText) return sectionText
 
-  // 섹션이 모두 비어있는 경우 — rawContent에서 frontmatter 수동 제거
-  // indexOf 기반으로 ReDoS 방지 (regex [\s\S]*? 대체)
+  // When all sections are empty — manually remove frontmatter from rawContent
+  // indexOf-based to prevent ReDoS (replaces regex [\s\S]*?)
   const raw = doc.rawContent ?? ''
   if (raw.startsWith('---')) {
     const closeIdx = raw.indexOf('\n---', 3)
@@ -613,34 +613,34 @@ export function getStrippedBody(doc: LoadedDocument): string {
 }
 
 /**
- * B. 패시지-레벨 콘텐츠 선택.
+ * B. Passage-level content selection.
  *
- * queryTerms가 제공되면 쿼리 토큰과 가장 많이 매칭되는 섹션을 선택합니다.
- * queryTerms가 없으면 getStrippedBody() 전체를 앞에서부터 반환합니다.
+ * When queryTerms are provided, selects the section with the most query token matches.
+ * When queryTerms are absent, returns the full getStrippedBody() from the beginning.
  *
- * 모든 경우에서 frontmatter YAML은 제외됩니다.
+ * Frontmatter YAML is excluded in all cases.
  */
 function getDocContent(
   doc: LoadedDocument,
   budget: number,
   queryTerms?: string[]
 ): string {
-  // queryTerms 없음 → frontmatter 제거된 본문 앞부분
+  // No queryTerms → beginning of frontmatter-stripped body
   if (!queryTerms || queryTerms.length === 0) {
     const body = getStrippedBody(doc)
     return body.length > budget ? body.slice(0, budget).trimEnd() + '…' : body
   }
 
-  // 패시지-레벨: 쿼리 토큰과 가장 많이 매칭되는 섹션 선택
-  // intro 섹션 body에는 H1 제목("# 방열 시스템")이 포함되어 파일명이 쿼리와 겹치면
-  // 짧은 intro가 긴 H2 섹션보다 높은 점수를 받는 문제가 있음.
-  // 이를 방지하기 위해 intro 섹션 body에서 선두 마크다운 heading을 제거한 뒤 스코어링.
+  // Passage-level: select the section that matches most query tokens
+  // Intro section body contains the H1 title (e.g., "# Heat System"), so when filename
+  // overlaps with query, short intros score higher than longer H2 sections.
+  // To prevent this, strip the leading markdown heading from intro section body before scoring.
   let bestSection: DocSection | null = null
   let bestScore = -1
 
   for (const section of doc.sections) {
     if (!section.body.trim()) continue
-    // intro 섹션 body의 선두 H1 제목 제거 후 스코어링 (파일명 인플레이션 방지)
+    // Strip leading H1 title from intro section body before scoring (prevents filename inflation)
     const bodyForScore = section.heading === '(intro)'
       ? section.body.replace(/^#[^\n]*\n?/, '').trim()
       : section.body
@@ -712,14 +712,14 @@ function bfsFromDocIds(
 }
 
 /**
- * 총 컨텍스트 예산 (chars).
- * 16000자 ≈ ~4800 토큰 — Claude 200k 컨텍스트 대비 여유 충분.
+ * Total context budget (chars).
+ * 16000 chars ≈ ~4800 tokens — plenty of room within Claude's 200k context.
  * 조정 가이드: 응답 품질보다 커버리지가 중요하면 늘리고,
  * 비용/속도가 우선이면 줄이세요.
  */
 const DEEP_CONTEXT_BUDGET = 16_000
 
-/** 홉 거리별 문서당 최대 내용 길이 (chars) */
+/** Max content length per document by hop distance (chars) */
 const HOP_CHAR_BUDGET = [1_500, 900, 500, 250] as const
 
 /**
@@ -743,7 +743,7 @@ export async function buildDeepGraphContext(
   const { links } = useGraphStore.getState()
   const { loadedDocuments } = useVaultStore.getState()
   if (!loadedDocuments?.length) {
-    logger.warn('[RAG] loadedDocuments 없음 — 볼트가 로드되지 않았습니다')
+    logger.warn('[RAG] loadedDocuments is empty — vault not loaded')
     return ''
   }
 
@@ -752,7 +752,7 @@ export async function buildDeepGraphContext(
   // WikiLink 없는 볼트 — 그래프 탐색 불가, TF-IDF 결과를 직접 포맷
   if (!links.length) {
     if (results.length === 0) return ''
-    const parts: string[] = ['## 관련 문서 (직접 검색)\n']
+    const parts: string[] = ['## Related documents (direct search)\n']
     let charCount = 20
     for (const r of results.slice(0, maxDocs)) {
       const doc = docMap.get(r.doc_id)
@@ -760,7 +760,7 @@ export async function buildDeepGraphContext(
       const name = doc.filename.replace(/\.md$/i, '')
       const content = getDocContent(doc, 1200, queryTerms)
       if (!content) continue
-      const entry = `[문서] ${name}\n${content}\n\n`
+      const entry = `[doc] ${name}\n${content}\n\n`
       if (charCount + entry.length > DEEP_CONTEXT_BUDGET) break
       parts.push(entry)
       charCount += entry.length
@@ -799,7 +799,7 @@ export async function buildDeepGraphContext(
     if (doc?.graphWeight === 'skip') continue
     const decay = isOutdatedDoc(doc) ? 0.3 : 1.0
     // graph_weight: low → 링크 가중치 0.3 감쇠 (100-499 outbound links)
-    const weightDecay = doc?.graphWeight === 'low' ? 0.15 : 1.0  // low 감쇄 강화 (0.3→0.15)
+    const weightDecay = doc?.graphWeight === 'low' ? 0.15 : 1.0  // strengthened low decay (0.3→0.15)
     // Speaker affinity boost: doc.speaker matches current persona → +10%
     const speakerBoost = (currentSpeaker && currentSpeaker !== 'unknown' && doc?.speaker === currentSpeaker) ? 1.1 : 1.0
     _pprEntries.push([id, score * decay * weightDecay * speakerBoost])
@@ -809,20 +809,20 @@ export async function buildDeepGraphContext(
 
   if (sorted.length === 0) return ''
 
-  // buildStructureHeader 호환용 visited Map (시드=0, 나머지=1)
+  // visited Map for buildStructureHeader compatibility (seed=0, rest=1)
   const visited = new Map<string, number>(
     sorted.map(([id]) => [id, seedSet.has(id) ? 0 : 1])
   )
 
-  // PageRank + 클러스터 계산 전 UI 양보
+  // Yield to UI before PageRank + cluster computation
   await new Promise<void>(r => setTimeout(r, 0))
 
-  // 구조 헤더 (PageRank + 클러스터 개요)
+  // Structure header (PageRank + cluster overview)
   const structureHeader = await buildStructureHeader(visited, adjacency, links, loadedDocuments, docMap, getMetrics)
 
-  // PPR 순위별 레이블 및 문자 예산
-  // 상위 3개: 핵심 (1500자), 4-8위: 연관 (900자), 9위+: 주변 (500자)
-  const parts: string[] = [structureHeader, '## 관련 문서 (PPR 탐색)\n']
+  // PPR rank-based labels and character budget
+  // Top 3: core (1500 chars), ranks 4-8: related (900 chars), rank 9+: peripheral (500 chars)
+  const parts: string[] = [structureHeader, '## Related documents (PPR traversal)\n']
   let charCount = structureHeader.length + 20
   let docHits = 0
 
@@ -832,21 +832,21 @@ export async function buildDeepGraphContext(
     const doc = docMap.get(docId)
     if (!doc) return  // phantom node — skip
 
-    // adaptive 예산: 대형 문서(10K+ chars)에 더 많은 예산 배분 (최대 2배)
+    // adaptive budget: allocate more budget to large docs (10K+ chars) (up to 2x)
     const docLen = doc.rawContent?.length ?? 0
     const baseBudget = rank < 3 ? 1_500 : rank < 8 ? 900 : 500
     const budget = docLen > 10_000
       ? Math.min(baseBudget * 2, Math.max(baseBudget, Math.floor(docLen * 0.03)))
       : baseBudget
-    const label = seedSet.has(docId) ? '핵심' : rank < 3 ? '핵심' : rank < 8 ? '연관' : '주변'
+    const label = seedSet.has(docId) ? 'core' : rank < 3 ? 'core' : rank < 8 ? 'related' : 'peripheral'
     const name = doc.filename.replace(/\.md$/i, '')
     const speaker = doc.speaker && doc.speaker !== 'unknown' ? ` (${doc.speaker})` : ''
     const dateLabel = getDocDateLabel(doc)
-    const sourceLabel = doc.source ? ` [출처: ${doc.source}]` : ''
+    const sourceLabel = doc.source ? ` [source: ${doc.source}]` : ''
     const typeLabel = doc.type ? ` [${doc.type}]` : ''
     const scorePct = Math.round(pprScore * 1000) / 10
     const outdatedLabel = (doc.status === 'outdated' || doc.status === 'deprecated')
-      ? ` ⚠️구버전${doc.supersededBy ? `→${doc.supersededBy}` : ''}`
+      ? ` ⚠️outdated${doc.supersededBy ? `→${doc.supersededBy}` : ''}`
       : ''
     const header = `[${label}|PPR ${scorePct}]${outdatedLabel}${typeLabel} ${name}${speaker}${dateLabel ? ` [${dateLabel}]` : ''}${sourceLabel}`
 
@@ -859,9 +859,9 @@ export async function buildDeepGraphContext(
     docHits++
   })
 
-  logger.debug(`[RAG] PPR 완료: 후보=${sorted.length}, 콘텐츠 포함=${docHits}개, 총 ${charCount}자`)
+  logger.debug(`[RAG] PPR complete: candidates=${sorted.length}, content included=${docHits}, total ${charCount} chars`)
 
-  // 실제 문서 콘텐츠가 하나도 없으면 TF-IDF 결과 직접 포맷으로 폴백
+  // Fall back to direct TF-IDF result formatting if no actual document content
   if (docHits === 0) {
     if (results.length === 0) return ''
     const fallback: string[] = ['## 관련 문서 (직접 검색)\n']
@@ -871,7 +871,7 @@ export async function buildDeepGraphContext(
       if (!doc) continue
       const content = getDocContent(doc, 1200, queryTerms)
       if (!content) continue
-      const entry = `[직접] ${doc.filename.replace(/\.md$/i, '')}\n${content}\n\n`
+      const entry = `[direct] ${doc.filename.replace(/\.md$/i, '')}\n${content}\n\n`
       if (fallbackChars + entry.length > DEEP_CONTEXT_BUDGET) break
       fallback.push(entry)
       fallbackChars += entry.length
@@ -883,14 +883,14 @@ export async function buildDeepGraphContext(
 }
 
 /**
- * 특정 문서 ID를 시작점으로 그래프를 BFS 탐색하여 관련 컨텍스트를 수집.
+ * Collects related context by BFS traversal of the graph starting from a specific document ID.
  *
- * buildDeepGraphContext와 동일하지만 키워드 검색을 완전히 우회합니다.
- * 사용자가 그래프에서 노드를 직접 선택했을 때 사용하세요.
+ * Same as buildDeepGraphContext but completely bypasses keyword search.
+ * Use when the user directly selects a node in the graph.
  *
- * @param startDocId  시작 문서 ID (graphStore.selectedNodeId)
- * @param maxHops     탐색할 최대 홉 수 (기본 3)
- * @param maxDocs     수집할 최대 문서 수 (기본 20)
+ * @param startDocId  Starting document ID (graphStore.selectedNodeId)
+ * @param maxHops     Maximum hops to traverse (default 3)
+ * @param maxDocs     Maximum documents to collect (default 20)
  */
 export async function buildDeepGraphContextFromDocId(
   startDocId: string,
@@ -914,8 +914,8 @@ export async function buildDeepGraphContextFromDocId(
   const sorted = [...visited.entries()].sort((a, b) =>
     a[1] !== b[1] ? a[1] - b[1] : (recMap2.get(b[0]) ?? 0) - (recMap2.get(a[0]) ?? 0)
   )
-  const hopLabel = ['선택', '1홉', '2홉', '3홉']
-  const parts: string[] = [structureHeader, '## 선택 노드 관련 문서 (그래프 탐색)\n']
+  const hopLabel = ['selected', '1-hop', '2-hop', '3-hop']
+  const parts: string[] = [structureHeader, '## Selected node related documents (graph traversal)\n']
   let charCount = structureHeader.length + 25
 
   for (const [docId, hop] of sorted) {
@@ -924,11 +924,11 @@ export async function buildDeepGraphContextFromDocId(
     if (!doc) continue
 
     const budget = HOP_CHAR_BUDGET[hop] ?? 80
-    const label = hopLabel[hop] ?? `${hop}홉`
+    const label = hopLabel[hop] ?? `${hop}-hop`
     const name = doc.filename.replace(/\.md$/i, '')
     const speaker = doc.speaker && doc.speaker !== 'unknown' ? ` (${doc.speaker})` : ''
     const dateLabel = getDocDateLabel(doc)
-    const sourceLabel = doc.source ? ` [출처: ${doc.source}]` : ''
+    const sourceLabel = doc.source ? ` [source: ${doc.source}]` : ''
     const header = `[${label}] ${name}${speaker}${dateLabel ? ` [${dateLabel}]` : ''}${sourceLabel}`
     const content = getDocContent(doc, budget)
     const entry = `${header}\n${content}\n\n`
@@ -941,16 +941,16 @@ export async function buildDeepGraphContextFromDocId(
   return parts.join('') + '\n'
 }
 
-// ── 3a-helper. 구조 헤더 생성 ────────────────────────────────────────────────
+// ── 3a-helper. Structure header generation ──────────────────────────────────
 
 /**
- * 탐색된 문서들의 구조 정보를 AI 컨텍스트 헤더로 생성합니다.
+ * Generates structural info of traversed documents as an AI context header.
  *
- * 포함 내용:
- *  - PageRank 상위 허브 문서
- *  - C. 클러스터별 TF-IDF 주제 키워드 레이블
- *  - D. 여러 클러스터를 연결하는 브릿지 문서
- *  - A. WikiLink 없이 의미적으로 연결된 숨겨진 연관 문서 쌍
+ * Includes:
+ *  - Top PageRank hub documents
+ *  - C. Per-cluster TF-IDF topic keyword labels
+ *  - D. Bridge documents connecting multiple clusters
+ *  - A. Hidden semantic connection pairs without WikiLinks
  */
 async function buildStructureHeader(
   visited: Map<string, number>,
@@ -963,14 +963,14 @@ async function buildStructureHeader(
   const metrics = getMetrics()  // cached — no recomputation if adjacency/links unchanged
   const { pageRank, clusters, clusterCount } = metrics
 
-  // PageRank 상위 5개 (탐색 문서 한정)
+  // Top 5 PageRank (limited to traversed documents)
   const topDocs = [...visited.keys()]
     .map(id => ({ id, rank: pageRank.get(id) ?? 0 }))
     .sort((a, b) => b.rank - a.rank)
     .slice(0, 5)
     .map(({ id }) => docMap.get(id)?.filename.replace(/\.md$/i, '') ?? id)
 
-  // C. 클러스터별 문서 그룹 + TF-IDF 주제 키워드 레이블 (캐시 미스 시 비용↑ — UI 양보)
+  // C. Per-cluster document groups + TF-IDF topic keyword labels (expensive on cache miss — yield to UI)
   await new Promise<void>(r => setTimeout(r, 0))
   const clusterTopics = getClusterTopics(clusters, loadedDocuments, 3)
   const clusterGroups = new Map<number, string[]>()
@@ -987,11 +987,11 @@ async function buildStructureHeader(
     .map(([cId, names]) => {
       const topics = clusterTopics.get(cId) ?? []
       const topicLabel = topics.length > 0 ? ` [${topics.join('/')}]` : ''
-      return `  • 클러스터 ${cId + 1}${topicLabel} (${names.length}개): ${names.slice(0, 5).join(', ')}${names.length > 5 ? ' …' : ''}`
+      return `  • Cluster ${cId + 1}${topicLabel} (${names.length}): ${names.slice(0, 5).join(', ')}${names.length > 5 ? ' …' : ''}`
     })
     .join('\n')
 
-  // D. 브릿지 노드 탐지 (탐색 문서 한정, 상위 3개)
+  // D. Bridge node detection (limited to traversed docs, top 3)
   const visitedAdj = new Map<string, string[]>()
   for (const [docId] of visited) {
     visitedAdj.set(docId, adjacency.get(docId) ?? [])
@@ -1000,36 +1000,36 @@ async function buildStructureHeader(
     .slice(0, 3)
     .map(b => {
       const name = docMap.get(b.docId)?.filename.replace(/\.md$/i, '') ?? b.docId
-      return `${name}(${b.clusterCount}개 클러스터 연결)`
+      return `${name}(${b.clusterCount} clusters connected)`
     })
 
-  // A. 묵시적 연결 발견 (WikiLink 없는 의미적 유사 쌍, 상위 4개) — 캐시 미스 시 비용↑, UI 양보
+  // A. Implicit link discovery (semantic similarity pairs without WikiLinks, top 4) — expensive on cache miss, yield to UI
   await new Promise<void>(r => setTimeout(r, 0))
   const implicitLinks = tfidfIndex.findImplicitLinks(adjacency, 4, 0.25)
     .map(l => {
       const a = l.filenameA.replace(/\.md$/i, '')
       const b = l.filenameB.replace(/\.md$/i, '')
       const pct = Math.round(l.similarity * 100)
-      return `  • "${a}" ↔ "${b}" (유사도 ${pct}%)`
+      return `  • "${a}" ↔ "${b}" (similarity ${pct}%)`
     })
 
   const lines: string[] = [
-    `## 프로젝트 구조 개요`,
-    `총 클러스터: ${clusterCount}개 | 탐색 문서: ${visited.size}개`,
-    `주요 허브 문서 (PageRank 상위): ${topDocs.join(', ')}`,
+    `## Project structure overview`,
+    `Total clusters: ${clusterCount} | Explored documents: ${visited.size}`,
+    `Key hub documents (top PageRank): ${topDocs.join(', ')}`,
   ]
 
   if (clusterLines) {
-    lines.push(`\n클러스터별 주제 그룹:`)
+    lines.push(`\nCluster topic groups:`)
     lines.push(clusterLines)
   }
 
   if (bridges.length > 0) {
-    lines.push(`\n핵심 브릿지 문서 (다중 클러스터 연결): ${bridges.join(', ')}`)
+    lines.push(`\nKey bridge documents (multi-cluster connection): ${bridges.join(', ')}`)
   }
 
   if (implicitLinks.length > 0) {
-    lines.push(`\n숨겨진 의미적 연관 (WikiLink 없음):`)
+    lines.push(`\nHidden semantic connections (no WikiLink):`)
     lines.push(implicitLinks.join('\n'))
   }
 
@@ -1079,8 +1079,8 @@ export function getGlobalContextDocIds(
 // ── 3b. Hub-seeded global graph context ──────────────────────────────────────
 
 /**
- * 연결도(degree) 기준 상위 N개 허브 문서 ID 반환.
- * 허브 노드는 많은 문서와 연결되어 있어 전체 탐색 시작점으로 적합.
+ * Returns top N hub document IDs by degree (connectivity).
+ * Hub nodes are connected to many documents, making them suitable as full traversal starting points.
  */
 function getHubDocIds(adjacency: Map<string, string[]>, topN: number = 10): string[] {
   return [...adjacency.entries()]
@@ -1091,12 +1091,12 @@ function getHubDocIds(adjacency: Map<string, string[]>, topN: number = 10): stri
 }
 
 /**
- * 허브 노드를 시작점으로 전체 그래프를 BFS 탐색하여 컨텍스트 수집.
+ * Collects context by BFS traversal of the full graph starting from hub nodes.
  *
- * "전체 프로젝트 인사이트", "전반적인 피드백" 등 광범위한 쿼리나
- * 노드 선택 없이 AI 분석 버튼을 눌렀을 때 사용.
+ * Used for broad queries like "full project insight", "overall feedback" etc.
+ * or when the AI analysis button is pressed without node selection.
  *
- * @param maxDocs   수집할 최대 문서 수 (기본 35)
+ * @param maxDocs   Maximum documents to collect (default 35)
  * @param maxHops   BFS 최대 홉 수 (기본 4)
  */
 export async function buildGlobalGraphContext(

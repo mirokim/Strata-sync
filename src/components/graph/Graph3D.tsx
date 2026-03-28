@@ -184,7 +184,7 @@ export default function Graph3D({ width, height }: Props) {
     }
     if (sphereDirty && sphereInstancedRef.current) {
       sphereInstancedRef.current.instanceMatrix.needsUpdate = true
-      sphereInstancedRef.current.boundingSphere = null  // 캐싱된 boundingSphere 무효화 → raycast 정확도 보장
+      sphereInstancedRef.current.boundingSphere = null  // Invalidate cached boundingSphere → ensures raycast accuracy
     }
     if (octaDirty && octaInstancedRef.current) {
       octaInstancedRef.current.instanceMatrix.needsUpdate = true
@@ -403,7 +403,7 @@ export default function Graph3D({ width, height }: Props) {
     linePosRef.current = posArray
     const colorArray = new Float32Array(links.length * 6)
     for (let i = 0; i < links.length; i++) {
-      // strength [0.15, 1.0] → brightness: 약한 링크는 어둡게, 강한 링크는 밝게
+      // strength [0.15, 1.0] → brightness: weak links darker, strong links brighter
       const s = (links[i] as GraphLink).strength ?? 0.5
       const brightness = EDGE_DEF_R * (0.5 + s * 2.0)
       for (let v = 0; v < 2; v++) {
@@ -640,7 +640,7 @@ export default function Graph3D({ width, height }: Props) {
     if (!camera || !controls) return
 
     const { x, y, z } = nodeData.pos
-    // 목표: controls.target → 노드 위치, camera → 노드에서 120 단위 거리
+    // Target: controls.target → node position, camera → 120 units away from node
     const from = camera.position.clone()
     const toTarget = new THREE.Vector3(x, y, z)
     const toPos = toTarget.clone().add(new THREE.Vector3(0, 0, 120))
@@ -700,7 +700,7 @@ export default function Graph3D({ width, height }: Props) {
     renderBudgetRef.current = Math.max(renderBudgetRef.current, 5)
   }, [selectedNodeId, nodes])
 
-  // ── Wire opacity 실시간 반영 ──────────────────────────────────────────────
+  // ── Wire opacity real-time sync ──────────────────────────────────────────────
   useEffect(() => {
     if (lineMatRef.current) {
       lineMatRef.current.opacity = physics.linkOpacity
@@ -709,7 +709,7 @@ export default function Graph3D({ width, height }: Props) {
     }
   }, [physics.linkOpacity])
 
-  // ── Node size 실시간 반영 ─────────────────────────────────────────────────
+  // ── Node size real-time sync ─────────────────────────────────────────────────
   useEffect(() => {
     const baseScale = physics.nodeRadius / 7
     const dummy = dummyRef.current
@@ -769,7 +769,7 @@ export default function Graph3D({ width, height }: Props) {
     renderBudgetRef.current = Math.max(renderBudgetRef.current, 3)
   }, [aiHighlightNodeIds])
 
-  // ── Neighbor highlight — color-dim approach (InstancedMesh 호환) ──────────
+  // ── Neighbor highlight — color-dim approach (InstancedMesh compatible) ──────────
   useEffect(() => {
     const dataMap = nodeDataRef.current
     const colorArray = lineColorArrayRef.current
@@ -994,13 +994,13 @@ export default function Graph3D({ width, height }: Props) {
     if (!renderer || !camera) return
 
     if (draggingNodeIdRef.current) {
-      // 4px 이상 움직였을 때만 드래그로 판정 (클릭 오인 방지)
+      // Only classify as drag when moved 4px+ (prevent false click detection)
       if (!isDraggingRef.current) {
         const dx = e.clientX - mouseDownPosRef.current.x
         const dy = e.clientY - mouseDownPosRef.current.y
         if (dx * dx + dy * dy > 16) { isDraggingRef.current = true; nodeWasDraggedRef.current = true }
       }
-      if (!isDraggingRef.current) return  // 아직 임계값 미달 — 클릭으로 처리
+      if (!isDraggingRef.current) return  // Still below threshold — treat as click
       const ndc = getNDC(e.clientX, e.clientY)
       raycasterRef.current.setFromCamera(ndc, camera)
       const intersection = new THREE.Vector3()
@@ -1069,7 +1069,7 @@ export default function Graph3D({ width, height }: Props) {
     if (lastHoveredRef.current !== null) {
       lastHoveredRef.current = null
       setHoveredNode(null)
-      // 클릭으로 고정된 툴팁은 마우스가 나가도 유지
+      // Tooltip pinned by click persists when mouse leaves
     }
   }, [setHoveredNode])
 
@@ -1106,7 +1106,7 @@ export default function Graph3D({ width, height }: Props) {
     setSelectedNode(nodeId)
     setSelectedDoc(docId)
 
-    // 클릭 즉시 툴팁 표시 — 노드의 3D 위치를 화면 좌표로 투영
+    // Show tooltip immediately on click — project node's 3D position to screen coordinates
     let tooltipX = e.clientX
     let tooltipY = e.clientY
     const nodeData = nodeDataRef.current.get(nodeId)
@@ -1119,7 +1119,7 @@ export default function Graph3D({ width, height }: Props) {
     setTooltip({ nodeId, x: tooltipX, y: tooltipY })
 
     if (clickTimerRef.current) {
-      // ── 더블클릭: 타이머 취소 → 에디터 열기 ────────────────────────────────
+      // ── Double-click: cancel timer → open editor ────────────────────────────────
       clearTimeout(clickTimerRef.current)
       clickTimerRef.current = null
       setTooltip(null)
@@ -1150,7 +1150,7 @@ export default function Graph3D({ width, height }: Props) {
         openInEditor(docId)
       }
     } else {
-      // ── 싱글클릭: 툴팁 유지, 300ms 내 재클릭 대기 ──────────────────────────
+      // ── Single-click: keep tooltip, wait 300ms for re-click ──────────────────────────
       clickTimerRef.current = setTimeout(() => { clickTimerRef.current = null }, 300)
     }
   }, [getNDC, nodeIdFromHit, setSelectedNode, setSelectedDoc, setHoveredNode,

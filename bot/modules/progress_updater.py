@@ -1,10 +1,10 @@
 """
-progress_updater.py — Slack 봇 단계별 진행 메시지
+progress_updater.py — Slack bot step-by-step progress messages
 
-각 파이프라인 단계에서 chat_update를 호출해 진행 상황을 표시합니다.
-- 경과 시간을 2.5초마다 live 업데이트 (배경 스레드)
-- 단계 수 (X/N 단계) 표시
-- 단계별 실제 소요 시간은 step_timings.json에 EWMA로 누적
+Calls chat_update at each pipeline step to display progress.
+- Live updates elapsed time every 2.5s (background thread)
+- Shows step count (X/N steps)
+- Actual time per step is accumulated via EWMA in step_timings.json
 """
 
 from __future__ import annotations
@@ -15,19 +15,19 @@ import time
 from pathlib import Path
 from typing import Callable
 
-# ── 단계 정의 (이름: 초기 예상 소요 시간 — ETA 제거됐지만 EWMA 학습용으로 유지) ──
+# ── Step definitions (name: initial estimated duration — ETA removed but kept for EWMA learning) ──
 
 STEPS = {
-    "search":   ("🔍 볼트 검색 중...",               3),
-    "analyze":  ("📚 문서 분석 중...",               10),
-    "webcheck": ("🌐 웹 검색 필요 여부 판단 중...",   3),
-    "websearch":("🌐 웹 정보 수집 중...",             6),
-    "answer":   ("✍️ 답변 작성 중...",              12),
+    "search":   ("🔍 Searching vault...",                     3),
+    "analyze":  ("📚 Analyzing documents...",                 10),
+    "webcheck": ("🌐 Determining web search necessity...",     3),
+    "websearch":("🌐 Collecting web information...",           6),
+    "answer":   ("✍️ Writing answer...",                     12),
 }
 
-# Electron 통합 경로 (단일 큰 스텝)
+# Electron integration path (single large step)
 ELECTRON_STEPS = {
-    "electron": ("⚡ Electron RAG + LLM 처리 중...", 15),
+    "electron": ("⚡ Electron RAG + LLM processing...", 15),
 }
 
 _TIMINGS_PATH = Path(__file__).parent.parent / "step_timings.json"
@@ -52,7 +52,7 @@ def _save_timings(timings: dict[str, float]) -> None:
 
 
 def _update_timing(step_key: str, actual_secs: float) -> None:
-    """EWMA로 단계 소요 시간 갱신."""
+    """Update step duration via EWMA."""
     timings = _load_timings()
     all_steps = {**STEPS, **ELECTRON_STEPS}
     default = float(all_steps.get(step_key, ("?", 10))[1])
@@ -65,19 +65,19 @@ def _update_timing(step_key: str, actual_secs: float) -> None:
 
 class ProgressUpdater:
     """
-    Slack 메시지를 단계별로 업데이트하는 헬퍼.
+    Helper that updates Slack messages step by step.
 
-    - 단계 시작/완료 시 즉시 Slack 메시지 업데이트
-    - 배경 스레드가 2.5초마다 경과 시간을 갱신 (live 업데이트)
-    - "N/M 단계" 형태로 진행도 표시, ETA 없음
+    - Immediately updates Slack message on step start/complete
+    - Background thread refreshes elapsed time every 2.5s (live update)
+    - Shows progress as "N/M steps", no ETA
 
-    사용법:
+    Usage:
         pu = ProgressUpdater(web, channel, ts, name="Chief", emoji="🗺️", is_electron=True)
         pu.start("search")
-        # ... 검색 수행 ...
+        # ... perform search ...
         pu.done("search")
         pu.start("answer")
-        # ... 답변 생성 ...
+        # ... generate answer ...
         pu.done("answer")
     """
 
@@ -106,23 +106,23 @@ class ProgressUpdater:
 
         self._step_start:    float | None = None
         self._current_key:   str   | None = None
-        self._current_label: str         = "처리 중..."
+        self._current_label: str         = "Processing..."
 
-        # 배경 ticker (경과시간 live 업데이트)
+        # Background ticker (live elapsed time update)
         self._ticker_stop:   threading.Event  = threading.Event()
         self._ticker_thread: threading.Thread | None = None
 
-    # ── 공개 API ──────────────────────────────────────────────────────────────
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     def start(self, step_key: str) -> None:
-        """단계 시작 — Slack 메시지 업데이트 + ticker 시작."""
+        """Step start — update Slack message + start ticker."""
         self._stop_ticker()
 
         self._current_key   = step_key
         self._step_start    = time.perf_counter()
         self._current_label = self._label(step_key)
 
-        # 이 단계부터 남은 단계로 재설정
+        # Reset remaining steps from this step onwards
         if step_key in self._remaining:
             idx = self._remaining.index(step_key)
             self._remaining = self._remaining[idx:]
@@ -131,13 +131,13 @@ class ProgressUpdater:
         self._start_ticker()
 
     def set_message(self, label: str) -> None:
-        """단계 흐름 밖에서 임의 상태 텍스트로 메시지를 직접 업데이트."""
+        """Directly update message with arbitrary status text outside the step flow."""
         self._stop_ticker()
         self._current_label = label
         self._update_message()
 
     def done(self, step_key: str) -> None:
-        """단계 완료 — EWMA 학습 + ticker 중지."""
+        """Step complete — EWMA learning + stop ticker."""
         self._stop_ticker()
 
         if self._step_start is not None:
@@ -151,7 +151,7 @@ class ProgressUpdater:
         self._step_start  = None
         self._current_key = None
 
-    # ── 내부 ─────────────────────────────────────────────────────────────────
+    # ── Internal ──────────────────────────────────────────────────────────────
 
     def _start_ticker(self) -> None:
         self._ticker_stop.clear()
@@ -165,7 +165,7 @@ class ProgressUpdater:
         self._ticker_thread = None
 
     def _tick(self) -> None:
-        """배경 스레드: _TICK_INTERVAL초마다 경과시간 갱신."""
+        """Background thread: refresh elapsed time every _TICK_INTERVAL seconds."""
         while not self._ticker_stop.wait(_TICK_INTERVAL):
             self._update_message()
 
@@ -186,7 +186,7 @@ class ProgressUpdater:
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": f"⏱ {elapsed_str}  •  {step_num}/{self._total_steps}단계",
+                        "text": f"⏱ {elapsed_str}  •  step {step_num}/{self._total_steps}",
                     }
                 ],
             },
@@ -198,8 +198,8 @@ class ProgressUpdater:
                 blocks=blocks, text=fallback,
             )
         except Exception as e:
-            self._log(f"[Progress] chat_update 실패 (무시): {e}")
+            self._log(f"[Progress] chat_update failed (ignored): {e}")
 
     def _label(self, step_key: str) -> str:
         all_steps = {**STEPS, **ELECTRON_STEPS}
-        return all_steps.get(step_key, ("⏳ 처리 중...", 0))[0]
+        return all_steps.get(step_key, ("⏳ Processing...", 0))[0]

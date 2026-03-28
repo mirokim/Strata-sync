@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-inject_keywords.py — §9 키워드 링크 주입
+inject_keywords.py — §9 Keyword link injection
 
-프로젝트A 고유 키워드(캐릭터명, 시스템명 등)가 본문에 텍스트로 등장할 때
-첫 1회만 [[target_stem|keyword]] 형식의 wikilink로 변환.
+When ProjectA-specific keywords (character names, system names, etc.) appear as text in body
+Convert only the first occurrence to [[target_stem|keyword]] wikilink format.
 
-특징:
-- placeholder 방식으로 기존 링크 보호
-- frontmatter 영역 제외
-- 코드블록 제외
-- 자기 자신 링크 금지
-- 최소 본문 길이 조건 (200자 이상인 파일만 처리)
+Features:
+- Protect existing links using placeholder approach
+- Exclude frontmatter area
+- Exclude code blocks
+- Prevent self-linking
+- Minimum body length condition (only process files with 200+ chars)
 
-사용법:
+Usage:
   python inject_keywords.py <active_dir>
 """
 
@@ -69,7 +69,7 @@ MIN_BODY_LEN = 100
 
 
 def split_frontmatter(content: str):
-    """frontmatter와 body 분리."""
+    """Separate frontmatter and body."""
     if content.startswith('---'):
         end = content.find('\n---\n', 4)
         if end != -1:
@@ -78,17 +78,17 @@ def split_frontmatter(content: str):
 
 
 def inject_keywords(active_dir: Path) -> int:
-    """키워드 wikilink 주입. 변경된 파일 수 반환."""
+    """Inject keyword wikilinks. Returns number of changed files."""
     all_stems = {md.stem for md in active_dir.glob('*.md')}
 
-    # target stem 중 존재하지 않는 것 경고
+    # Warn about target stems that do not exist
     missing = {k: v for k, v in KEYWORD_MAP.items() if v not in all_stems}
     if missing:
-        print(f"  ⚠️  대상 파일 없음 ({len(missing)}개):")
+        print(f"  ⚠️  Target file not found ({len(missing)}개):")
         for kw, stem in missing.items():
             print(f"       '{kw}' → '{stem}'")
 
-    # 유효한 키워드만 사용
+    # Use only valid keywords
     valid_map = {k: v for k, v in KEYWORD_MAP.items()
                  if v in all_stems and len(k) >= MIN_KEYWORD_LEN}
 
@@ -107,7 +107,7 @@ def inject_keywords(active_dir: Path) -> int:
 
         fm, body = split_frontmatter(content)
 
-        # 본문이 너무 짧으면 스킵
+        # Skip if body is too short
         if len(body.strip()) < MIN_BODY_LEN:
             continue
 
@@ -140,7 +140,7 @@ def inject_keywords(active_dir: Path) -> int:
         file_changed = False
 
         for keyword, target_stem in sorted_keywords:
-            # 자기 자신 파일이 대상인 경우 스킵
+            # Skip if target is the file itself
             if target_stem == current_stem:
                 continue
 
@@ -152,7 +152,7 @@ def inject_keywords(active_dir: Path) -> int:
             if not re.search(pattern, body_p):
                 continue
 
-            # 첫 등장 1회만 교체
+            # Replace only the first occurrence
             new_link = f'[[{target_stem}|{keyword}]]'
             body_p, count = re.subn(pattern, new_link, body_p, count=1)
 
@@ -174,17 +174,17 @@ def inject_keywords(active_dir: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description='§9 키워드 링크 주입')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
+    parser.add_argument('active_dir', help='active/ folder path')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 폴더를 찾을 수 없습니다.")
+        print(f"Error: {active_dir} folder not found.")
         sys.exit(1)
 
-    print(f"키워드 링크 주입 시작 (키워드 {len(KEYWORD_MAP)}개)...")
+    print(f"Keyword link injection starting (키워드 {len(KEYWORD_MAP)}개)...")
     n = inject_keywords(active_dir)
-    print(f"\n=== §9 키워드 링크 주입 완료: {n}개 파일 변경 ===")
+    print(f"\n=== §9 Keyword link injection complete: {n} files changed ===")
 
 
 if __name__ == '__main__':

@@ -17,7 +17,7 @@ function MessageBubble({ message }: Props) {
 
   const renderedContent = useMemo(() => {
     if (isUser) return null
-    // 스트리밍 중에는 plain text — ReactMarkdown 파싱 비용 방지
+    // During streaming, use plain text — avoids ReactMarkdown parsing cost
     if (message.streaming) {
       return (
         <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, wordBreak: 'break-word' }}>
@@ -118,7 +118,7 @@ function MessageBubble({ message }: Props) {
 
       {/* Message content */}
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        {/* 에이전트 처리 과정 (thinking) — 접을 수 있는 섹션 */}
+        {/* Agent processing (thinking) — collapsible section */}
         {message.thinking && (
           <div
             style={{
@@ -139,7 +139,7 @@ function MessageBubble({ message }: Props) {
               }}
             >
               <span style={{ fontSize: 12 }}>💭</span>
-              <span>에이전트 처리 과정</span>
+              <span>Agent Processing</span>
               <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.7 }}>
                 {thinkingOpen ? '▲' : '▼'}
               </span>
@@ -154,7 +154,7 @@ function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* 도구 호출 카드 (접을 수 있는 섹션) */}
+        {/* Tool call card (collapsible section) */}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <div
             style={{
@@ -175,7 +175,7 @@ function MessageBubble({ message }: Props) {
               }}
             >
               <span style={{ fontSize: 12 }}>🔧</span>
-              <span>도구 {message.toolCalls.length}회 사용</span>
+              <span>Tools used {message.toolCalls.length} times</span>
               <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.7 }}>
                 {toolsOpen ? '▲' : '▼'}
               </span>
@@ -205,7 +205,7 @@ function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* 메인 응답 */}
+        {/* Main response */}
         <div
           className="rounded-lg px-3 py-2 text-sm leading-relaxed prose-vault prose-chat"
           style={{
@@ -218,7 +218,7 @@ function MessageBubble({ message }: Props) {
         >
         {message.streaming && message.content === '' ? (
           /* Dots typing indicator while waiting for first token */
-          <span className="inline-flex gap-1 items-center" aria-label="입력 중">
+          <span className="inline-flex gap-1 items-center" aria-label="Typing">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}

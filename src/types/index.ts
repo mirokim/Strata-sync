@@ -6,7 +6,7 @@ export type SpeakerId =
   | 'plan_director'
   | 'level_director'
   | 'prog_director'
-  | 'unknown'   // Phase 6: vault 파일에서 speaker 미지정 시 폴백
+  | 'unknown'   // Phase 6: fallback when speaker is not specified in vault files
 
 /** The 5 actual director personas (excludes the 'unknown' fallback). */
 export type DirectorId = Exclude<SpeakerId, 'unknown'>
@@ -113,10 +113,10 @@ export interface ChatMessage {
 
 /** A raw file read from the filesystem vault */
 export interface VaultFile {
-  relativePath: string   // 볼트 루트 기준 (예: "subdir/note.md")
+  relativePath: string   // relative to vault root (e.g., "subdir/note.md")
   absolutePath: string
   content: string        // UTF-8
-  mtime?: number         // 파일 수정 타임스탬프 (ms)
+  mtime?: number         // file modification timestamp (ms)
 }
 
 /**
@@ -161,7 +161,7 @@ export interface LoadedDocument {
    * - skip: exclude from RAG traversal entirely (500+ outbound links, link-only hubs)
    */
   graphWeight?: 'normal' | 'low' | 'skip'
-  /** 멀티볼트: 이 문서가 속한 볼트 라벨 (Slack RAG 컨텍스트 출처 표시용) */
+  /** Multi-vault: vault label this document belongs to (for Slack RAG context source display) */
   vaultLabel?: string
 }
 

@@ -1,8 +1,8 @@
 /**
- * syncMcpConfig — GUI 설정을 mcp-config.json에 자동 동기화.
+ * syncMcpConfig — Auto-sync GUI settings to mcp-config.json.
  *
- * Electron 환경에서만 동작 (configAPI 없으면 no-op).
- * JiraTab / ConfluenceTab / SlackBotTab에서 설정 변경 시 호출.
+ * Only operates in Electron environment (no-op if configAPI is unavailable).
+ * Called when settings change in JiraTab / ConfluenceTab / SlackBotTab.
  */
 
 import type { JiraConfig, ConfluenceConfig } from '@/stores/settingsStore'

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-incremental_update.py — 신규 HTML 파일 증분 처리 도구
+incremental_update.py — Incremental processing tool for new HTML files
 
-새로운 Confluence HTML 파일이 downloaded_pages/ 에 추가되었을 때
-refined_vault/ 에 이미 있는 파일은 건너뛰고 신규 파일만 변환.
+When new Confluence HTML files are added to downloaded_pages/
+Skip files already in refined_vault/ and convert only new files.
 
-사용법:
+Usage:
   python incremental_update.py \\
       --src    /path/to/downloaded_pages \\
       --vault  /path/to/refined_vault \\
@@ -22,7 +22,7 @@ from pathlib import Path
 
 
 def get_existing_page_ids(active_dir: Path) -> set:
-    """이미 변환된 파일의 page_id 수집."""
+    """Collect page_ids of already converted files."""
     import re
     ids = set()
     for md in active_dir.glob('*.md'):
@@ -37,7 +37,7 @@ def get_existing_page_ids(active_dir: Path) -> set:
 
 
 def find_new_html_files(src_dirs: list, existing_ids: set) -> list:
-    """신규 HTML 파일 목록 (기존 page_id 제외)."""
+    """List of new HTML files (excluding existing page_ids)."""
     import re
     new_files = []
     for src_dir in src_dirs:
@@ -56,7 +56,7 @@ def find_new_html_files(src_dirs: list, existing_ids: set) -> list:
 
 
 def run_pipeline_step(script: Path, args: list):
-    """외부 스크립트 실행."""
+    """Execute external script."""
     cmd = [sys.executable, str(script)] + args
     result = subprocess.run(cmd, capture_output=False)
     return result.returncode
@@ -79,19 +79,19 @@ def main():
     scripts_dir = Path(args.scripts)
 
     if not active_dir.is_dir():
-        print(f"오류: active/ 폴더 없음: {active_dir}")
+        print(f"Error: active/ folder not found: {active_dir}")
         sys.exit(1)
 
-    print("기존 page_id 수집 중...")
+    print("Collecting existing page_ids...")
     existing = get_existing_page_ids(active_dir)
-    print(f"  기존 파일: {len(existing)}개")
+    print(f"  Existing files: {len(existing)}개")
 
-    print("신규 HTML 탐색 중...")
+    print("Searching for new HTML files...")
     new_html = find_new_html_files(args.src, existing)
-    print(f"  신규 파일: {len(new_html)}개")
+    print(f"  New files: {len(new_html)}개")
 
     if not new_html:
-        print("신규 파일 없음. 종료.")
+        print("No new files. Exiting.")
         return
 
     # 임시 폴더에 신규 파일 모아서 변환
@@ -106,17 +106,17 @@ def main():
             if files_dir.is_dir():
                 shutil.copytree(files_dir, tmp_src / files_dir.name)
 
-        print(f"\n변환 시작 ({len(new_html)}개)...")
+        print(f"\nStarting conversion ({len(new_html)}개)...")
         ret = run_pipeline_step(
             scripts_dir / 'refine_html_to_md.py',
             [str(tmp_src), str(active_dir), str(vault / 'attachments')]
         )
         if ret != 0:
-            print("변환 실패!")
+            print("Conversion failed!")
             sys.exit(ret)
 
     if args.full_pipeline:
-        print("\n파이프라인 추가 단계 실행...")
+        print("\nPipeline 추가 단계 실행...")
 
         print("  normalize_frontmatter.py ...")
         run_pipeline_step(scripts_dir / 'normalize_frontmatter.py', [str(active_dir)])
@@ -137,7 +137,7 @@ def main():
         print("  gen_index.py ...")
         run_pipeline_step(scripts_dir / 'gen_index.py', [str(active_dir)])
 
-    print("\n✅ 증분 업데이트 완료")
+    print("\n✅ 증분 업데이트 Complete")
 
 
 if __name__ == '__main__':

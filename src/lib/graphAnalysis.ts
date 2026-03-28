@@ -1,20 +1,20 @@
 /**
  * graphAnalysis.ts
  *
- * 여섯 가지 분석 도구를 제공합니다:
- *   A. TfIdfIndex      — 코사인 유사도 기반 문서 검색 + 묵시적 연결 발견
- *   B. computePageRank — 연결 중요도 기반 문서 순위 (인기 허브 감지)
- *   C. detectClusters  — Union-Find 연결 컴포넌트 (주제 클러스터 감지)
- *   D. detectBridgeNodes — 여러 클러스터를 연결하는 브릿지 노드 탐지
- *   E. getClusterTopics  — 클러스터별 TF-IDF 상위 키워드 추출
- *   F. findImplicitLinks — WikiLink 없이 의미적으로 유사한 숨겨진 연결 발견
+ * Provides six analysis tools:
+ *   A. TfIdfIndex      — Cosine similarity-based document search + implicit link discovery
+ *   B. computePageRank — Connection importance-based document ranking (hub detection)
+ *   C. detectClusters  — Union-Find connected components (topic cluster detection)
+ *   D. detectBridgeNodes — Bridge node detection connecting multiple clusters
+ *   E. getClusterTopics  — Top TF-IDF keyword extraction per cluster
+ *   F. findImplicitLinks — Hidden semantic connections without WikiLinks
  */
 
 import type { LoadedDocument } from '@/types'
 import { logger } from '@/lib/logger'
 import { expandTerms } from '@/lib/synonyms'
 
-// ── 공유 토크나이저 ──────────────────────────────────────────────────────────
+// ── Shared tokenizer ──────────────────────────────────────────────────────────
 
 const KO_SUFFIXES = [
   '이라는', '이라고', '에서는', '에게서', '한테서', '으로서', '으로써', '으로는',
@@ -42,8 +42,8 @@ function stemKorean(token: string): string[] {
 }
 
 export function tokenize(text: string): string[] {
-  // 한국어 숫자+단위 분리: "28일" → "28 일", "1월" → "1 월"
-  // 이렇게 해야 쿼리 "28일"의 "28"이 파일명 "[2026.01.28]"의 "28"과 매칭됨
+  // Korean number+unit separation: "28일" → "28 일", "1월" → "1 월"
+  // This ensures "28" from query "28일" matches "28" in filename "[2026.01.28]"
   const normalized = text.replace(/(\d+)(년|월|일|주|시간|시|분|초|개|명|번|회|차)/g, '$1 $2')
   const raw = normalized
     .toLowerCase()
@@ -59,7 +59,7 @@ export function tokenize(text: string): string[] {
   return stems
 }
 
-// ── A. BM25 Index (TF-IDF → BM25 전환) ──────────────────────────────────────
+// ── A. BM25 Index (TF-IDF → BM25 transition) ────────────────────────────────
 
 export interface TfIdfResult {
   docId: string
@@ -69,31 +69,31 @@ export interface TfIdfResult {
 }
 
 /**
- * 파일명에서 콘텐츠 작성일을 추출 (ms since epoch).
- * 패턴: [2023_05_02], 20250723, _250328, _260106 등.
- * 매칭 실패 시 0.
+ * Extract content creation date from filename (ms since epoch).
+ * Patterns: [2023_05_02], 20250723, _250328, _260106 etc.
+ * Returns 0 on match failure.
  */
 export function parseFilenameDate(filename: string): number {
-  const now = Date.now() + 30 * 86_400_000  // 30일 여유 (미래 예약 문서 허용)
-  // 경계: 단어 경계 또는 비숫자(괄호·밑줄·공백·하이픈 등)
-  const B = '(?:^|[^\\d])'   // 앞 경계
-  const A = '(?:[^\\d]|$)'   // 뒤 경계
+  const now = Date.now() + 30 * 86_400_000  // 30-day margin (allow future-dated documents)
+  // Boundary: word boundary or non-digit (parentheses, underscores, spaces, hyphens, etc.)
+  const B = '(?:^|[^\\d])'   // leading boundary
+  const A = '(?:[^\\d]|$)'   // trailing boundary
 
-  // YYYY_MM_DD 또는 YYYY-MM-DD (밑줄/하이픈 구분, 대괄호 유무 무관)
+  // YYYY_MM_DD or YYYY-MM-DD (underscore/hyphen separated, with or without brackets)
   let m = filename.match(new RegExp(`${B}(20[0-3]\\d)[_\\-](0[1-9]|1[0-2])[_\\-](0[1-9]|[12]\\d|3[01])${A}`))
   if (m) {
     const ms = Date.parse(`${m[1]}-${m[2]}-${m[3]}`)
     if (!isNaN(ms) && ms <= now) return ms
   }
 
-  // YYYYMMDD (8자리 연속) — 연도 2000~2039 제한
+  // YYYYMMDD (8 consecutive digits) — year range 2000~2039
   m = filename.match(new RegExp(`${B}(20[0-3]\\d)(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])${A}`))
   if (m) {
     const ms = Date.parse(`${m[1]}-${m[2]}-${m[3]}`)
     if (!isNaN(ms) && ms <= now) return ms
   }
 
-  // YY_MM_DD (밑줄/하이픈 구분, 25_03_28 등)
+  // YY_MM_DD (underscore/hyphen separated, e.g., 25_03_28)
   m = filename.match(new RegExp(`${B}(\\d{2})[_\\-](0[1-9]|1[0-2])[_\\-](0[1-9]|[12]\\d|3[01])${A}`))
   if (m) {
     const yy = parseInt(m[1], 10)
@@ -102,7 +102,7 @@ export function parseFilenameDate(filename: string): number {
     if (!isNaN(ms) && ms <= now) return ms
   }
 
-  // YYMMDD (6자리, 260106 등)
+  // YYMMDD (6 digits, e.g., 260106)
   m = filename.match(new RegExp(`${B}(\\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])${A}`))
   if (m) {
     const yy = parseInt(m[1], 10)
@@ -114,7 +114,7 @@ export function parseFilenameDate(filename: string): number {
   return 0
 }
 
-/** 문서의 콘텐츠 작성일 추출 (파일명 > frontmatter > mtime > 0) */
+/** Extract document content creation date (filename > frontmatter > mtime > 0) */
 export function getContentDate(doc: LoadedDocument): number {
   const fromFilename = parseFilenameDate(doc.filename)
   if (fromFilename > 0) return fromFilename
@@ -130,10 +130,10 @@ interface BM25Doc {
   docId: string
   filename: string
   speaker: string
-  termFreqs: Map<string, number>  // 원시 용어 빈도
-  docLen: number                   // 문서 총 토큰 수
-  contentDate: number              // 콘텐츠 작성일 (ms), 0 = 미상
-  bm25Vec: Map<string, number>    // 정규화 BM25 벡터 (묵시적 링크 유사도용)
+  termFreqs: Map<string, number>  // raw term frequency
+  docLen: number                   // total document token count
+  contentDate: number              // content creation date (ms), 0 = unknown
+  bm25Vec: Map<string, number>    // normalized BM25 vector (for implicit link similarity)
   bm25Norm: number
 }
 
@@ -145,11 +145,11 @@ export interface ImplicitLink {
   similarity: number
 }
 
-/** BM25 파라미터 */
-const BM25_K1 = 1.5   // 용어 포화 계수 — 빈도 증가의 한계 수익 조절
-const BM25_B  = 0.75  // 문서 길이 정규화 계수
+/** BM25 parameters */
+const BM25_K1 = 1.5   // term saturation coefficient — controls diminishing returns of frequency
+const BM25_B  = 0.75  // document length normalization coefficient
 
-/** IndexedDB 캐시 스키마 버전 — 포맷 변경 시 이 값만 올리면 캐시 자동 무효화 */
+/** IndexedDB cache schema version — bump this value to auto-invalidate cache on format change */
 export const TFIDF_SCHEMA_VERSION = 7
 
 export interface SerializedTfIdf {
@@ -180,7 +180,7 @@ export class TfIdfIndex {
   get isBuilt() { return this.built }
   get docCount() { return this.docs.length }
 
-  /** Worker에서 사전 계산한 묵시적 링크를 주입 (캐시 웜업) */
+  /** Inject pre-computed implicit links from Worker (cache warmup) */
   setImplicitLinks(links: ImplicitLink[], adjacency: Map<string, string[]>): void {
     this._implicitLinks = links
     this._implicitAdjRef = adjacency
@@ -221,7 +221,7 @@ export class TfIdfIndex {
     this._implicitLinks = null
     this._implicitAdjRef = null
     this.built = true
-    logger.debug(`[graphAnalysis] BM25 인덱스 캐시 복원: ${this.docs.length}개 문서`)
+    logger.debug(`[graphAnalysis] BM25 index cache restored: ${this.docs.length} docs`)
   }
 
   build(loadedDocuments: LoadedDocument[]): void {
@@ -235,7 +235,7 @@ export class TfIdfIndex {
     const docFreq = new Map<string, number>()
 
     for (const doc of loadedDocuments) {
-      if ((doc as any).graphWeight === 'skip') continue   // skip 문서는 BM25 인덱스 제외
+      if ((doc as any).graphWeight === 'skip') continue   // skip docs excluded from BM25 index
       const allText = [
         doc.filename.replace(/\.md$/i, ''),
         doc.tags?.join(' ') ?? '',
@@ -257,7 +257,7 @@ export class TfIdfIndex {
       }
     }
 
-    const N = docLens.size  // skip 필터된 문서 수 기준
+    const N = docLens.size  // based on skip-filtered document count
     const totalLen = [...docLens.values()].reduce((a, b) => a + b, 0)
     this.avgdl = N > 0 ? totalLen / N : 1
 
@@ -266,7 +266,7 @@ export class TfIdfIndex {
       this.idf.set(term, Math.log((N - df + 0.5) / (df + 0.5) + 1))
     }
 
-    // BM25 가중치 벡터 + L2 norm (묵시적 링크 유사도용)
+    // BM25 weight vectors + L2 norm (for implicit link similarity)
     for (const doc of loadedDocuments) {
       if ((doc as any).graphWeight === 'skip') continue   // skip 문서는 벡터도 제외
       const termFreq = rawTermFreqs.get(doc.id)!
@@ -298,7 +298,7 @@ export class TfIdfIndex {
     this._implicitLinks = null
     this._implicitAdjRef = null
     this.built = true
-    logger.debug(`[graphAnalysis] BM25 인덱스 빌드 완료: ${this.docs.length}개 문서, avgdl=${this.avgdl.toFixed(1)}`)
+    logger.debug(`[graphAnalysis] BM25 index build complete: ${this.docs.length} docs, avgdl=${this.avgdl.toFixed(1)}`)
   }
 
   /**
@@ -475,7 +475,7 @@ export class TfIdfIndex {
     pairs.sort((a, b) => b.similarity - a.similarity)
     this._implicitLinks = pairs
     this._implicitAdjRef = adjacency
-    logger.debug(`[graphAnalysis] 묵시적 연결 ${pairs.length}쌍 발견 (docs=${n}, threshold=${threshold})`)
+    logger.debug(`[graphAnalysis] ${pairs.length} implicit link pairs found (docs=${n}, threshold=${threshold})`)
 
     return pairs.slice(0, topN)
   }

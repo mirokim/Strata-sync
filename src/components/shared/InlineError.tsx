@@ -5,7 +5,7 @@ interface Props {
   className?: string
 }
 
-/** 인라인 에러 메시지 — 다크 테마 CSS 변수 기반, role="alert" 접근성 포함 */
+/** Inline error message — dark theme CSS variable based, includes role="alert" accessibility */
 export default function InlineError({ message, className }: Props) {
   if (!message) return null
   return (

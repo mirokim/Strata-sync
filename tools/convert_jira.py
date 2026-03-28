@@ -1,5 +1,5 @@
 """
-Jira JSON → Markdown 변환 스크립트
+Jira JSON → Markdown conversion script
 매뉴얼: sections/s10_jira_fetch.md, s11_jira_aggregate.md, s12_jira_crosslink.md
 """
 
@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 
-# ── 설정 ───────────────────────────────────────────────────────────────
+# ── Configuration ───────────────────────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
 ISSUES_PATH     = os.path.join(BASE_DIR, "issues.json")
 ATT_DIR         = os.path.join(BASE_DIR, "_attachments")   # 이슈키 폴더 하위
@@ -23,7 +23,7 @@ DOC_EXTS    = {".xlsx", ".xlsm", ".xls", ".pptx", ".ppt", ".pdf", ".docx", ".doc
 
 DECISION_KW = {"결정", "합의", "확정", "채택"}
 
-# ── 유틸 ───────────────────────────────────────────────────────────────
+# ── Utilities ───────────────────────────────────────────────────────────────
 def slugify(text: str) -> str:
     text = re.sub(r'[\\/*?:"<>|]', '', text)
     return re.sub(r'\s+', ' ', text).strip()[:120]
@@ -40,7 +40,7 @@ def parse_list(s: str) -> list[str]:
 def parse_labels(s: str) -> list[str]:
     return [x.lower() for x in parse_list(s)]
 
-# ── 첨부파일 인덱스 ─────────────────────────────────────────────────────
+# ── Attachment index ─────────────────────────────────────────────────────
 def build_attachment_index(att_dir: str) -> dict[str, dict[str, list[str]]]:
     """
     Returns {issue_key: {"images": [...], "docs": [...], "other": [...]}}
@@ -65,7 +65,7 @@ def build_attachment_index(att_dir: str) -> dict[str, dict[str, list[str]]]:
             index[key] = {"images": sorted(images), "docs": sorted(docs), "other": sorted(other)}
     return index
 
-# ── 매핑 ───────────────────────────────────────────────────────────────
+# ── Mapping ───────────────────────────────────────────────────────────────
 TYPE_MAP = {
     "작업": "spec", "이야기": "spec", "부작업": "spec",
     "epic": "spec", "버그": "spec", "작업관리": "spec",
@@ -75,7 +75,7 @@ TYPE_MAP = {
     "guide": "guide", "manual": "guide",
 }
 STATUS_MAP = {
-    "완료": "outdated", "닫힘": "outdated", "해결됨": "outdated",
+    "Complete": "outdated", "닫힘": "outdated", "해결됨": "outdated",
     "done": "outdated", "closed": "outdated", "resolved": "outdated",
     "취소": "deprecated", "won't fix": "deprecated", "cancelled": "deprecated",
 }
@@ -104,7 +104,7 @@ def triage(issue: dict) -> str:
         return "delete"
     if status_raw in {"취소", "cancelled", "won't fix"} and comment_count == 0:
         return "delete"
-    # 빈 티켓: description 없고 댓글 없음
+    # Empty ticket: no description and no comments
     if desc_len == 0 and comment_count == 0:
         return "delete"
     # 부작업: description 50자 미만 + 댓글 없음
@@ -120,7 +120,7 @@ def triage(issue: dict) -> str:
         return "low"
     if len(issuelinks) >= 3:
         return "low"
-    # 댓글에 결정/합의/확정/채택 포함
+    # Comments contain decision/agreement/confirmed/adopted
     comment_text = " ".join(c.get("body", "") for c in comments)
     if any(kw in comment_text for kw in DECISION_KW):
         return "low"
@@ -177,7 +177,7 @@ def build_issue_md(issue: dict, weight: str, attachments: dict | None = None) ->
     fm.append("related: []")
     fm.append("---")
 
-    # ── 본문 헤더 테이블 ──
+    # ── Body header table ──
     body = [f"# [{key}] {summary}", "",
             "| 항목 | 값 |", "|------|-----|",
             f"| 유형 | {itype_raw} |", f"| 상태 | {status_raw} |",
@@ -193,11 +193,11 @@ def build_issue_md(issue: dict, weight: str, attachments: dict | None = None) ->
     body += [f"| 생성일 | {created} |", f"| 수정일 | {updated} |",
              f"| 댓글 수 | {comment_count} |", ""]
 
-    # ── 설명 ──
+    # ── Description ──
     if description:
         body += ["## 설명", "", description, ""]
 
-    # ── 관련 이슈 ──
+    # ── Related issues ──
     if issuelinks:
         body += ["## 관련 이슈", ""]
         for link in issuelinks:
@@ -206,7 +206,7 @@ def build_issue_md(issue: dict, weight: str, attachments: dict | None = None) ->
             body.append(f"- {rel}: [[{lk}]]")
         body.append("")
 
-    # ── 댓글 ──
+    # ── Comments ──
     if comments:
         body.append("## 댓글")
         body.append("")
@@ -219,7 +219,7 @@ def build_issue_md(issue: dict, weight: str, attachments: dict | None = None) ->
             body.append(cbody)
             body.append("")
 
-    # ── 첨부파일 ──
+    # ── Attachments ──
     images = att.get("images", [])
     docs   = att.get("docs", [])
     if images or docs:
@@ -244,7 +244,7 @@ def build_epic_md(epic: dict, children: list[dict]) -> str:
     created  = epic.get("created", "")
     desc     = (epic.get("description", "") or "").strip()
 
-    done_statuses = {"완료", "닫힘", "해결됨", "done", "closed", "resolved"}
+    done_statuses = {"Complete", "닫힘", "해결됨", "done", "closed", "resolved"}
     status_counts: dict[str, int] = defaultdict(int)
     for ch in children:
         status_counts[ch.get("status", "기타")] += 1
@@ -270,14 +270,14 @@ def build_epic_md(epic: dict, children: list[dict]) -> str:
     if desc:
         body += ["## 개요", "", desc, ""]
 
-    # 진행 현황
-    body += ["## 진행 현황", "", "| 상태 | 건수 | 비율 |", "|------|------|------|"]
+    # Progress status
+    body += ["## Progress status", "", "| 상태 | 건수 | 비율 |", "|------|------|------|"]
     for s, cnt in sorted(status_counts.items(), key=lambda x: -x[1]):
         pct = f"{cnt * 100 // total}%" if total else "—"
         body.append(f"| {s} | {cnt} | {pct} |")
     body += [f"| **합계** | **{total}** | — |", ""]
 
-    # 핵심 결정사항 (댓글에서 추출)
+    # Key decisions (extracted from comments)
     decisions = []
     for ch in children:
         for c in (ch.get("comments", []) or []):
@@ -288,9 +288,9 @@ def build_epic_md(epic: dict, children: list[dict]) -> str:
     if decisions:
         body += ["## 핵심 결정사항", ""] + decisions[:10] + [""]
 
-    # 하위 이슈
+    # Sub-issues
     if children:
-        body += ["## 하위 이슈", "", "| Key | 제목 | 상태 | 담당 | SP |",
+        body += ["## Sub-issues", "", "| Key | 제목 | 상태 | 담당 | SP |",
                  "|-----|------|------|------|-----|"]
         for ch in children[:50]:
             sp = ch.get("story_points", "") or "—"
@@ -308,7 +308,7 @@ def build_epic_md(epic: dict, children: list[dict]) -> str:
 
 # ── Release 집계 문서 ──────────────────────────────────────────────────
 def build_release_md(version: str, issues: list[dict]) -> str:
-    done_statuses = {"완료", "닫힘", "해결됨", "done", "closed", "resolved"}
+    done_statuses = {"Complete", "닫힘", "해결됨", "done", "closed", "resolved"}
     total = len(issues)
 
     status_counts: dict[str, int] = defaultdict(int)
@@ -329,7 +329,7 @@ def build_release_md(version: str, issues: list[dict]) -> str:
     ])
 
     body = [f"# Release {version}", "",
-            f"> 전체 이슈 {total}건 | 완료율 {completion}", "",
+            f"> 전체 이슈 {total}건 | Complete율 {completion}", "",
             "## 상태 현황", "", "| 상태 | 건수 | 비율 |", "|------|------|------|"]
     for s, cnt in sorted(status_counts.items(), key=lambda x: -x[1]):
         pct = f"{cnt * 100 // total}%" if total else "—"
@@ -337,7 +337,7 @@ def build_release_md(version: str, issues: list[dict]) -> str:
     body += [f"| **합계** | **{total}** | — |", ""]
 
     if active_issues:
-        body += ["## 미완료 이슈", "", "| Key | 제목 | 상태 | 담당 |",
+        body += ["## 미Complete 이슈", "", "| Key | 제목 | 상태 | 담당 |",
                  "|-----|------|------|------|"]
         for iss in active_issues[:30]:
             body.append(
@@ -351,7 +351,7 @@ def build_release_md(version: str, issues: list[dict]) -> str:
     return fm + "\n\n" + "\n".join(body)
 
 
-# ── 메인 ───────────────────────────────────────────────────────────────
+# ── Main ───────────────────────────────────────────────────────────────
 def main():
     print("issues.json 로드 중...")
     with open(ISSUES_PATH, encoding="utf-8") as f:
@@ -361,7 +361,7 @@ def main():
     print("첨부파일 인덱스 구성 중...")
     att_index = build_attachment_index(ATT_DIR)
     att_total = sum(len(v["images"]) + len(v["docs"]) for v in att_index.values())
-    print(f"  첨부파일 있는 이슈: {len(att_index)}개 | 총 파일: {att_total}개")
+    print(f"  첨부파일 있는 이슈: {len(att_index)}개 | Total files: {att_total}개")
 
     os.makedirs(RAW_DIR, exist_ok=True)
 
@@ -425,7 +425,7 @@ def main():
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(build_epic_md(epic, children))
 
-    print(f"  {len(epic_issues)}개 Epic 집계 문서 생성 완료")
+    print(f"  {len(epic_issues)}개 Epic 집계 문서 생성 Complete")
 
     # ── Release 집계 문서 ─────────────────────────────────────────────
     release_candidates = {v: iss for v, iss in release_map.items() if len(iss) >= 3}
@@ -434,12 +434,12 @@ def main():
         fpath = os.path.join(OUT_DIR, f"Release {slugify(version)}.md")
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(build_release_md(version, version_issues))
-    print(f"  {len(release_candidates)}개 Release 집계 문서 생성 완료")
+    print(f"  {len(release_candidates)}개 Release 집계 문서 생성 Complete")
 
     # ── 최종 통계 ─────────────────────────────────────────────────────
     raw_count = len(os.listdir(RAW_DIR))
     agg_count = len([f for f in os.listdir(OUT_DIR) if f.endswith(".md")])
-    print(f"\n완료!")
+    print(f"\nComplete!")
     print(f"  raw/ 개별 이슈: {raw_count}개")
     print(f"  집계 문서: {agg_count}개")
     print(f"  출력 경로: {OUT_DIR}")

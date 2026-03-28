@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-check_keyword_density.py — §9.6 KEYWORD_MAP 빈도 감시
+check_keyword_density.py — §9.6 KEYWORD_MAP density monitoring
 
-inject_keywords.py 실행 전 각 키워드가 몇 % 문서에 주입될지 미리 점검.
-등장 비율이 임계값(기본 15%)을 초과하는 키워드를 ⚠️ 경고 출력.
+Pre-check what % of documents each keyword will be injected into before running inject_keywords.py.
+Output warning for keywords exceeding the threshold (default 15%).
 
-사용법:
+Usage:
   python check_keyword_density.py <active_dir> [--threshold 15]
 """
 
@@ -25,7 +25,7 @@ try:
     _spec.loader.exec_module(_mod)                  # type: ignore[union-attr]
     KEYWORD_MAP: dict[str, str] = _mod.KEYWORD_MAP
 except Exception as e:
-    print(f"오류: inject_keywords.py 를 로드할 수 없습니다 — {e}")
+    print(f"Error: inject_keywords.py 를 로드할 수 없습니다 — {e}")
     sys.exit(1)
 
 
@@ -41,10 +41,10 @@ def check_density(active_dir: Path, threshold: float = 15.0) -> None:
     md_files = list(active_dir.glob('*.md'))
     total = len(md_files)
     if total == 0:
-        print("오류: .md 파일이 없습니다.")
+        print("Error: .md 파일이 없습니다.")
         sys.exit(1)
 
-    # 각 키워드 등장 파일 수 카운트
+    # Count files where each keyword appears
     counts: dict[str, int] = {kw: 0 for kw in KEYWORD_MAP}
     patterns: dict[str, re.Pattern] = {}
     for kw in KEYWORD_MAP:
@@ -61,16 +61,16 @@ def check_density(active_dir: Path, threshold: float = 15.0) -> None:
             if pat.search(body):
                 counts[kw] += 1
 
-    # 비율 계산 및 정렬 (내림차순)
+    # Calculate ratios and sort (descending)
     results: list[tuple[str, str, float]] = []
     for kw, target in KEYWORD_MAP.items():
         pct = counts[kw] / total * 100
         results.append((kw, target, pct))
     results.sort(key=lambda x: -x[2])
 
-    # 출력
+    # Output
     print("=" * 65)
-    print(f"§9.6 KEYWORD_MAP 밀도 점검 (임계값: {threshold:.0f}%, 총 {total}개 파일)")
+    print(f"§9.6 KEYWORD_MAP 밀도 점검 (임계값: {threshold:.0f}%, 총 {total} files)")
     print("=" * 65)
 
     warnings: list[tuple[str, float]] = []
@@ -89,7 +89,7 @@ def check_density(active_dir: Path, threshold: float = 15.0) -> None:
 
     print()
     if warnings:
-        print(f"⚠️  임계값({threshold:.0f}%) 초과 키워드: {len(warnings)}개")
+        print(f"⚠️  Threshold({threshold:.0f}%) 초과 키워드: {len(warnings)}개")
         for kw, pct in warnings:
             print(f"   '{kw}' ({pct:.1f}%) — inject_keywords.py 실행 전 제거 검토")
         print()
@@ -101,14 +101,14 @@ def check_density(active_dir: Path, threshold: float = 15.0) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description='§9.6 KEYWORD_MAP 밀도 감시')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
+    parser.add_argument('active_dir', help='active/ folder path')
     parser.add_argument('--threshold', type=float, default=15.0,
-                        help='경고 임계값 %% (기본: 15)')
+                        help='Warning threshold %% (기본: 15)')
     args = parser.parse_args()
 
     active_dir = Path(args.active_dir)
     if not active_dir.is_dir():
-        print(f"오류: {active_dir} 폴더를 찾을 수 없습니다.")
+        print(f"Error: {active_dir} folder not found.")
         sys.exit(1)
 
     check_density(active_dir, threshold=args.threshold)

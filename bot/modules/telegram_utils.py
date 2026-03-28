@@ -1,7 +1,7 @@
 """
-telegram_utils.py — Telegram 이벤트 파싱 + 파일 다운로드 유틸리티
+telegram_utils.py — Telegram event parsing + file download utilities
 
-Slack 봇과 동일한 RAG 파이프라인을 Telegram에서 사용하기 위한 어댑터.
+Adapter for using the same RAG pipeline as the Slack bot on Telegram.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ TELEGRAM_FILE_API = "https://api.telegram.org/file/bot{token}"
 
 
 def tg_api(token: str, method: str, data: dict | None = None, timeout: float = 30.0) -> dict:
-    """Telegram Bot API 호출."""
+    """Call the Telegram Bot API."""
     url = f"{TELEGRAM_API.format(token=token)}/{method}"
     if data:
         payload = json.dumps(data).encode("utf-8")
@@ -30,7 +30,7 @@ def tg_api(token: str, method: str, data: dict | None = None, timeout: float = 3
 
 def send_message(token: str, chat_id: int | str, text: str,
                  parse_mode: str = "Markdown", reply_to: int | None = None) -> dict:
-    """텍스트 메시지 전송. 4096자 초과 시 분할 전송."""
+    """Send a text message. Split into chunks if exceeding 4096 characters."""
     MAX_LEN = 4096
     results = []
     for i in range(0, len(text), MAX_LEN):
@@ -43,14 +43,14 @@ def send_message(token: str, chat_id: int | str, text: str,
         try:
             results.append(tg_api(token, "sendMessage", data))
         except Exception:
-            # Markdown 파싱 실패 시 plain text로 재시도
+            # Retry as plain text if Markdown parsing fails
             data.pop("parse_mode", None)
             results.append(tg_api(token, "sendMessage", data))
     return results[-1] if results else {}
 
 
 def send_typing(token: str, chat_id: int | str) -> None:
-    """typing 상태 표시."""
+    """Show typing indicator."""
     try:
         tg_api(token, "sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5.0)
     except Exception:
@@ -59,8 +59,8 @@ def send_typing(token: str, chat_id: int | str) -> None:
 
 def download_file(token: str, file_id: str) -> tuple[bytes | None, str]:
     """
-    Telegram 파일 다운로드.
-    Returns: (파일 바이트, 파일 경로) 또는 (None, "")
+    Download a Telegram file.
+    Returns: (file bytes, file path) or (None, "")
     """
     try:
         info = tg_api(token, "getFile", {"file_id": file_id})
@@ -71,19 +71,19 @@ def download_file(token: str, file_id: str) -> tuple[bytes | None, str]:
         with urllib.request.urlopen(url, timeout=30) as resp:
             return resp.read(), file_path
     except Exception as e:
-        logger.error("Telegram 파일 다운로드 실패: %s", e)
+        logger.error("Telegram file download failed: %s", e)
         return None, ""
 
 
 def extract_text_and_files(message: dict) -> tuple[str, list[dict]]:
     """
-    Telegram 메시지에서 텍스트와 파일 정보 추출.
-    Returns: (텍스트, [{file_id, file_name, mime_type}])
+    Extract text and file info from a Telegram message.
+    Returns: (text, [{file_id, file_name, mime_type}])
     """
     text = message.get("text", "") or message.get("caption", "") or ""
     files = []
 
-    # 문서 첨부
+    # Document attachment
     if "document" in message:
         doc = message["document"]
         files.append({
@@ -92,9 +92,9 @@ def extract_text_and_files(message: dict) -> tuple[str, list[dict]]:
             "mime_type": doc.get("mime_type", ""),
         })
 
-    # 사진 (가장 큰 해상도)
+    # Photo (highest resolution)
     if "photo" in message and message["photo"]:
-        photo = message["photo"][-1]  # 최대 해상도
+        photo = message["photo"][-1]  # Maximum resolution
         files.append({
             "file_id": photo["file_id"],
             "file_name": "photo.jpg",
@@ -106,10 +106,10 @@ def extract_text_and_files(message: dict) -> tuple[str, list[dict]]:
 
 def parse_persona_command(text: str) -> tuple[str, str]:
     """
-    페르소나 커맨드 파싱.
-    '/ask chief 어떤 질문' → ('chief', '어떤 질문')
-    '/ask 그냥 질문' → ('chief', '그냥 질문')  # 기본 페르소나
-    일반 텍스트 → ('', 텍스트)
+    Parse persona commands.
+    '/ask chief some question' → ('chief', 'some question')
+    '/ask just a question' → ('chief', 'just a question')  # default persona
+    plain text → ('', text)
     """
     from .persona_config import PERSONA_ALIASES
 

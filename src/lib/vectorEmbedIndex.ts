@@ -1,19 +1,19 @@
 /**
- * vectorEmbedIndex.ts — Google Gemini 벡터 임베딩 인덱스
+ * vectorEmbedIndex.ts — Google Gemini vector embedding index
  *
- * BM25 검색 결과를 벡터 유사도로 reranking합니다.
- * 문서 임베딩은 볼트 로드 후 백그라운드에서 빌드되며 IndexedDB에 캐시됩니다.
+ * Reranks BM25 search results using vector similarity.
+ * Document embeddings are built in the background after vault load and cached in IndexedDB.
  *
- * 사용 흐름:
- *   1. vault 로드 후 → buildInBackground(docs, apiKey, vaultPath, fingerprint)
- *   2. 검색 시 → hybridRerank(bm25Results, query, apiKey, topK)
+ * Usage flow:
+ *   1. After vault load → buildInBackground(docs, apiKey, vaultPath, fingerprint)
+ *   2. During search → hybridRerank(bm25Results, query, apiKey, topK)
  */
 
 import type { LoadedDocument, SearchResult } from '@/types'
 import { loadVectorEmbedCache, saveVectorEmbedCache } from './vectorEmbedCache'
 import { logger } from './logger'
 
-// ── 내부 상태 ────────────────────────────────────────────────────────────────
+// ── Internal state ────────────────────────────────────────────────────────────
 
 interface EmbedState {
   embeddings: Map<string, number[]>  // docId → embedding vector
@@ -21,7 +21,7 @@ interface EmbedState {
   building: boolean
   progress: number  // 0~100
   lastError: string | null
-  generation: number  // reset() 호출마다 증가 — 구버전 빌드가 결과를 덮어쓰지 못하게
+  generation: number  // increments on each reset() call — prevents stale builds from overwriting results
 }
 
 const _state: EmbedState = {
@@ -33,7 +33,7 @@ const _state: EmbedState = {
   generation: 0,
 }
 
-// ── 문서 텍스트 추출 ──────────────────────────────────────────────────────────
+// ── Document text extraction ──────────────────────────────────────────────────
 
 function docText(doc: LoadedDocument): string {
   return [
@@ -45,7 +45,7 @@ function docText(doc: LoadedDocument): string {
   ].join(' ').slice(0, 3000)
 }
 
-// ── Google Gemini 임베딩 API (gemini-embedding-001, 3072차원) ─────────────────
+// ── Google Gemini embedding API (gemini-embedding-001, 3072 dimensions) ──────
 
 async function embedSingle(text: string, apiKey: string): Promise<number[]> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent`
@@ -65,7 +65,7 @@ async function embedSingle(text: string, apiKey: string): Promise<number[]> {
   return json.embedding.values
 }
 
-/** texts 배열을 동시 5개씩 병렬 처리 */
+/** Process texts array in parallel batches of 5 */
 async function embedBatch(texts: string[], apiKey: string): Promise<number[][]> {
   const CONCURRENCY = 5
   const results: number[][] = new Array(texts.length)
@@ -77,7 +77,7 @@ async function embedBatch(texts: string[], apiKey: string): Promise<number[][]> 
   return results
 }
 
-// ── 코사인 유사도 ─────────────────────────────────────────────────────────────
+// ── Cosine similarity ─────────────────────────────────────────────────────────
 
 function cosineSim(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0
@@ -98,10 +98,10 @@ export const vectorEmbedIndex = {
   get lastError(): string | null { return _state.lastError },
 
   /**
-   * 볼트 로드 후 백그라운드에서 임베딩을 빌드합니다.
-   * - IndexedDB 캐시 히트 시: API 호출 없이 즉시 복원
-   * - 캐시 미스 시: Gemini API로 배치 임베딩 생성 후 캐시 저장
-   * - generation 체크: reset() 이후 시작된 이전 빌드가 결과를 덮어쓰지 못하게 방어
+   * Builds embeddings in the background after vault load.
+   * - IndexedDB cache hit: immediately restores without API calls
+   * - Cache miss: creates batch embeddings via Gemini API then saves to cache
+   * - Generation check: prevents stale builds started before reset() from overwriting results
    */
   async buildInBackground(
     docs: LoadedDocument[],
@@ -113,28 +113,28 @@ export const vectorEmbedIndex = {
     _state.building = true
     _state.progress = 0
     _state.lastError = null
-    const myGen = _state.generation  // 이 빌드의 세대 번호
+    const myGen = _state.generation  // generation number for this build
 
     try {
-      // 캐시 확인
+      // Check cache
       const cached = await loadVectorEmbedCache(vaultPath, fingerprint)
-      if (_state.generation !== myGen) return  // 이미 reset() 됨
+      if (_state.generation !== myGen) return  // already reset()
       if (cached && cached.size > 0) {
         _state.embeddings = cached
         _state.built = true
         _state.progress = 100
-        logger.debug(`[vector] 캐시 복원: ${cached.size}개 문서`)
+        logger.debug(`[vector] cache restored: ${cached.size} docs`)
         return
       }
 
-      // 새로 빌드: 배치 단위 API 호출
+      // Fresh build: batch API calls
       const BATCH = 20
       const newEmbeddings = new Map<string, number[]>()
       let processed = 0
       let firstError: string | null = null
 
       for (let i = 0; i < docs.length; i += BATCH) {
-        if (_state.generation !== myGen) return  // reset() 됨 → 중단
+        if (_state.generation !== myGen) return  // reset() called → abort
 
         const batch = docs.slice(i, i + BATCH)
         const texts = batch.map(docText)
@@ -146,11 +146,11 @@ export const vectorEmbedIndex = {
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
-          logger.warn(`[vector] 배치 임베딩 실패 (${i}~${i + BATCH}):`, msg)
+          logger.warn(`[vector] batch embedding failed (${i}~${i + BATCH}):`, msg)
           if (!firstError) firstError = msg
-          // 첫 배치 실패 시 중단 — 키 오류 가능성
+          // Abort on first batch failure — likely key error
           if (i === 0) {
-            _state.lastError = `API 오류: ${msg}`
+            _state.lastError = `API error: ${msg}`
             break
           }
         }
@@ -158,23 +158,23 @@ export const vectorEmbedIndex = {
         processed += batch.length
         _state.progress = Math.round((processed / docs.length) * 100)
 
-        // Rate limit 방지
+        // Rate limit prevention
         if (i + BATCH < docs.length) await new Promise(r => setTimeout(r, 100))
       }
 
-      if (_state.generation !== myGen) return  // 최종 저장 전 마지막 체크
+      if (_state.generation !== myGen) return  // final check before saving
 
       _state.embeddings = newEmbeddings
       _state.built = newEmbeddings.size > 0
       _state.progress = 100
 
       if (newEmbeddings.size > 0) {
-        if (firstError) _state.lastError = `일부 실패 (${newEmbeddings.size}개 성공): ${firstError}`
+        if (firstError) _state.lastError = `Partial failure (${newEmbeddings.size} succeeded): ${firstError}`
         saveVectorEmbedCache(vaultPath, fingerprint, newEmbeddings)
-          .catch((e: unknown) => logger.warn('[vector] 캐시 저장 실패:', e))
-        logger.debug(`[vector] 임베딩 완료: ${newEmbeddings.size}개 문서`)
+          .catch((e: unknown) => logger.warn('[vector] cache save failed:', e))
+        logger.debug(`[vector] embedding complete: ${newEmbeddings.size} docs`)
       } else if (!_state.lastError) {
-        _state.lastError = firstError ?? '알 수 없는 오류 — 브라우저 콘솔 확인'
+        _state.lastError = firstError ?? 'Unknown error — check browser console'
       }
     } finally {
       if (_state.generation === myGen) _state.building = false
@@ -182,9 +182,9 @@ export const vectorEmbedIndex = {
   },
 
   /**
-   * BM25 결과를 벡터 유사도로 reranking합니다.
-   * - 40% BM25 정규화 점수 + 60% 벡터 코사인 유사도
-   * - 임베딩 인덱스 없거나 API 호출 실패 시 원본 BM25 결과 반환
+   * Reranks BM25 results using vector similarity.
+   * - 40% normalized BM25 score + 60% vector cosine similarity
+   * - Returns original BM25 results when embedding index is unavailable or API call fails
    */
   async hybridRerank(
     results: SearchResult[],
@@ -216,9 +216,9 @@ export const vectorEmbedIndex = {
   },
 
   /**
-   * 전체 임베딩 대상 벡터 검색 (순수 의미 유사도).
-   * BM25 후보 없이 모든 문서에 대해 코사인 유사도를 계산해 top-K 반환.
-   * 인덱스 미빌드 또는 API 실패 시 null 반환 → 호출 측에서 BM25 폴백.
+   * Full vector search across all embeddings (pure semantic similarity).
+   * Computes cosine similarity against all documents without BM25 candidates and returns top-K.
+   * Returns null when index is not built or API fails → caller falls back to BM25.
    */
   async fullVectorSearch(
     query: string,
@@ -235,7 +235,7 @@ export const vectorEmbedIndex = {
       return null
     }
 
-    // 문서 메타데이터 맵 (id → doc)
+    // Document metadata map (id → doc)
     const docMap = new Map(docs.map(d => [d.id, d]))
 
     const scored: SearchResult[] = []
@@ -261,9 +261,9 @@ export const vectorEmbedIndex = {
       .slice(0, topK)
   },
 
-  /** 볼트 전환 시 상태 초기화 */
+  /** Reset state when switching vaults */
   reset(): void {
-    _state.generation++  // 진행 중인 빌드를 무효화
+    _state.generation++  // invalidate in-progress builds
     _state.embeddings = new Map()
     _state.built = false
     _state.building = false

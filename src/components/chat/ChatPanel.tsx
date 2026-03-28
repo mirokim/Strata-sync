@@ -41,7 +41,7 @@ export default function ChatPanel() {
       const result = summaryChunksRef.current.join('').trim()
       if (result) appendToMemory(result)
     } catch (e) {
-      setSummarizeError('요약 실패: ' + (e instanceof Error ? e.message : String(e)))
+      setSummarizeError('Summarization failed: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setIsSummarizing(false)
     }
@@ -61,13 +61,13 @@ export default function ChatPanel() {
                 className="text-xs mb-2"
                 style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace' }}
               >
-                ⚔️ AI 토론
+                ⚔️ AI Debate
               </div>
             )}
             {!debateMode && <PersonaChips />}
           </div>
 
-          {/* 요약 저장 / 보고서 버튼 */}
+          {/* Summarize / Report buttons */}
           {!debateMode && (
             <div className="shrink-0 flex items-center gap-1 ml-2">
               {messages.length > 0 && (
@@ -76,8 +76,8 @@ export default function ChatPanel() {
                   disabled={isSummarizing}
                   className="p-1.5 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
                   style={{ color: summarizeError ? 'var(--color-error)' : memoryText.trim() ? 'var(--color-accent)' : 'var(--color-text-secondary)', opacity: isSummarizing ? 0.5 : 1 }}
-                  title={isSummarizing ? '요약 중...' : summarizeError ?? '대화 요약 → 기억에 저장'}
-                  aria-label="대화 요약 저장"
+                  title={isSummarizing ? 'Summarizing...' : summarizeError ?? 'Summarize conversation and save to memory'}
+                  aria-label="Save conversation summary"
                 >
                   <NotebookPen size={13} />
                 </button>
@@ -87,8 +87,8 @@ export default function ChatPanel() {
                   onClick={() => openInEditor('report:latest')}
                   className="p-1.5 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
                   style={{ color: 'var(--color-text-secondary)' }}
-                  title="대화 보고서 보기"
-                  aria-label="대화 보고서 보기"
+                  title="View conversation report"
+                  aria-label="View conversation report"
                 >
                   <FileText size={13} />
                 </button>

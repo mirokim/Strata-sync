@@ -5,37 +5,37 @@ import { DEFAULT_PERSONA_MODELS, DEFAULT_MODEL_ID, MODEL_OPTIONS, envKeyForProvi
 import { BFS_DEFAULT_HOPS, BFS_DEFAULT_MAX_DOCS } from '@/lib/constants'
 import type { VaultPersonaConfig } from '@/lib/personaVaultConfig'
 
-// 구버전 단일 설정을 per-vault Record로 마이그레이션할 때 사용하는 sentinel 키
+// Sentinel key used when migrating legacy single settings to per-vault Record
 export const MIGRATED_CONFIG_KEY = '__migrated__'
 
 // ── Search / RAG tuning config ────────────────────────────────────────────────
 
 export interface SearchConfig {
-  // 파일명 vs 본문 가중치
-  filenameWeight: number          // 파일명 히트당 점수 (default 10)
-  bodyWeight: number              // 본문 히트당 점수 (default 1)
+  // Filename vs body weight
+  filenameWeight: number          // score per filename hit (default 10)
+  bodyWeight: number              // score per body hit (default 1)
   // Recency boost
-  recencyHalfLifeDays: number     // 반감기 일수 (default 180)
-  recencyCoeffNormal: number      // 일반 쿼리 recency 계수 (default 0.4)
-  recencyCoeffHot: number         // 최신 인텐트 쿼리 recency 계수 (default 2.0)
-  // 후보 수
-  directCandidatesNormal: number  // 일반 쿼리 직접 검색 후보 수 (default 20)
-  directCandidatesRecency: number // 최신 인텐트 직접 검색 후보 수 (default 50)
-  directHitSeeds: number          // BFS 시드로 사용할 직접 검색 상위 N개 (default 8)
-  bm25Candidates: number          // BM25 폴백 후보 수 (default 8)
-  rerankSeeds: number             // rerank 후 시드 수 (default 5)
-  // 임계값
-  minDirectHitScore: number       // hasStrongDirectHit 임계값 (default 0.2)
-  minPinnedScore: number          // 전체 본문 직접 주입 임계값 (default 0.4)
-  minBm25Score: number            // BM25 최소 유효 점수 (default 0.05)
-  // 리랭킹 가중치
-  rerankVectorWeight: number      // 벡터 점수 가중치 (default 0.6)
-  rerankKeywordWeight: number     // 키워드 점수 가중치 (default 0.3)
-  // 그래프 탐색
-  bfsMaxHops: number              // BFS 최대 홉 수 (default 3)
-  bfsMaxDocs: number              // BFS 최대 수집 문서 수 (default 20)
-  // 소형 볼트 전체 주입
-  fullVaultThreshold: number      // 볼트 전체 글자 수가 이 이하이면 RAG 없이 전체 주입 (0=비활성화, default 60000)
+  recencyHalfLifeDays: number     // half-life in days (default 180)
+  recencyCoeffNormal: number      // normal query recency coefficient (default 0.4)
+  recencyCoeffHot: number         // recency intent query recency coefficient (default 2.0)
+  // Candidate counts
+  directCandidatesNormal: number  // normal query direct search candidates (default 20)
+  directCandidatesRecency: number // recency intent direct search candidates (default 50)
+  directHitSeeds: number          // top N direct search results to use as BFS seeds (default 8)
+  bm25Candidates: number          // BM25 fallback candidates (default 8)
+  rerankSeeds: number             // seed count after rerank (default 5)
+  // Thresholds
+  minDirectHitScore: number       // hasStrongDirectHit threshold (default 0.2)
+  minPinnedScore: number          // full body direct injection threshold (default 0.4)
+  minBm25Score: number            // BM25 minimum valid score (default 0.05)
+  // Reranking weights
+  rerankVectorWeight: number      // vector score weight (default 0.6)
+  rerankKeywordWeight: number     // keyword score weight (default 0.3)
+  // Graph traversal
+  bfsMaxHops: number              // BFS max hops (default 3)
+  bfsMaxDocs: number              // BFS max collected documents (default 20)
+  // Small vault full injection
+  fullVaultThreshold: number      // inject all without RAG if total vault chars is below this (0=disabled, default 60000)
 }
 
 export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
@@ -63,18 +63,18 @@ export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
 
 export interface ConfluenceConfig {
   baseUrl: string
-  /** 인증 방식:
-   *  cloud       — Atlassian Cloud: Basic auth (이메일 + API 토큰)
-   *  server_pat  — Server/Data Center: Bearer PAT (토큰만, 이메일 불필요)
-   *  server_basic — Server/Data Center: Basic auth (사용자명 + 비밀번호) */
+  /** Auth type:
+   *  cloud       — Atlassian Cloud: Basic auth (email + API token)
+   *  server_pat  — Server/Data Center: Bearer PAT (token only, no email needed)
+   *  server_basic — Server/Data Center: Basic auth (username + password) */
   authType: 'cloud' | 'server_pat' | 'server_basic'
-  email: string      // cloud/server_basic: 이메일 or 사용자명
-  apiToken: string   // cloud/server_basic: API토큰 or 비밀번호; server_pat: PAT
+  email: string      // cloud/server_basic: email or username
+  apiToken: string   // cloud/server_basic: API token or password; server_pat: PAT
   spaceKey: string
   targetFolder: string
-  /** 가져올 페이지의 최소 생성일 (YYYY-MM-DD). 기본: 2026-01-01 */
+  /** Minimum creation date for pages to fetch (YYYY-MM-DD). Default: 2026-01-01 */
   dateFrom: string
-  /** 가져올 페이지의 최대 생성일 (YYYY-MM-DD). 비어있으면 제한 없음 */
+  /** Maximum creation date for pages to fetch (YYYY-MM-DD). Empty means no limit */
   dateTo: string
   bypassSSL: boolean
   autoSync: boolean
@@ -91,9 +91,9 @@ export interface JiraConfig {
   bypassSSL: boolean
   dateFrom: string
   dateTo: string
-  targetFolder: string            // 자동 동기화 저장 폴더 (default: 'jira')
-  autoSync: boolean               // 자동 동기화 활성화
-  autoSyncIntervalMinutes: number // 동기화 주기 (분, default: 60)
+  targetFolder: string            // auto-sync save folder (default: 'jira')
+  autoSync: boolean               // auto-sync enabled
+  autoSyncIntervalMinutes: number // sync interval (minutes, default: 60)
 }
 
 const DEFAULT_DATE_FROM = '2026-01-01'
@@ -104,9 +104,9 @@ export interface JiraTeamMember {
   id: string              // local UUID
   name: string
   jiraAccountId: string   // from Jira API
-  role: string            // 아트 디렉터, 게임 디자이너 etc.
+  role: string            // art director, game designer etc.
   responsibilities: string  // multiline plain text
-  component: string       // Jira 컴포넌트 이름 (예: [V1_아트실] 원화파트)
+  component: string       // Jira component name (e.g., [V1_Art] Concept Art)
 }
 
 // ── Edit Agent config ──────────────────────────────────────────────────────────
@@ -120,9 +120,9 @@ export interface EditAgentConfig {
   modelId: string
   /** User-editable refinement manual (system prompt for the agent) */
   refinementManual: string
-  /** Confluence 자동 가져오기 (웨이크 사이클마다 실행) */
+  /** Confluence auto-import (runs every wake cycle) */
   syncConfluence: boolean
-  /** Jira 자동 가져오기 (웨이크 사이클마다 실행) */
+  /** Jira auto-import (runs every wake cycle) */
   syncJira: boolean
 }
 
@@ -133,29 +133,29 @@ export const DEFAULT_EDIT_AGENT_CONFIG: EditAgentConfig = {
   syncConfluence: false,
   syncJira: false,
   refinementManual:
-`당신은 Obsidian 볼트의 마크다운 문서를 자율적으로 관리·개선하는 편집 에이전트입니다.
+`You are an editing agent that autonomously manages and improves markdown documents in an Obsidian vault.
 
-사용 가능한 도구:
-- list_directory: 디렉토리 파일 목록 조회
-- read_file / write_file: 파일 읽기/쓰기
-- rename_file / delete_file / create_folder / move_file: 파일 관리
-- run_python_tool: tools/ 폴더의 파이썬 스크립트 실행 (normalize_frontmatter, enhance_wikilinks, inject_keywords, gen_index, check_quality 등)
-- confluence_import: Confluence 페이지 가져오기 → MD 변환 → 볼트 저장
-- jira_import: Jira 이슈 가져오기 → MD 변환 → 볼트 저장
-- web_search: 웹 검색
-- gstack: 헤드리스 브라우저 (goto/snapshot/click/fill/js/text)
+Available tools:
+- list_directory: List files in a directory
+- read_file / write_file: Read/write files
+- rename_file / delete_file / create_folder / move_file: File management
+- run_python_tool: Run Python scripts in tools/ folder (normalize_frontmatter, enhance_wikilinks, inject_keywords, gen_index, check_quality, etc.)
+- confluence_import: Import Confluence pages → convert to MD → save to vault
+- jira_import: Import Jira issues → convert to MD → save to vault
+- web_search: Web search
+- gstack: Headless browser (goto/snapshot/click/fill/js/text)
 
-주요 임무:
-1. 문서 간 교차 참조 및 위키링크([[링크]]) 추가
-2. 구조 개선: 헤더, 목록, 표 등 마크다운 포맷 최적화
-3. RAG 검색 품질 향상: 핵심 키워드 및 태그 보강
-4. 중복 내용 감지 및 표준화
-5. 파이썬 도구로 대량 파일 일괄 처리
+Primary tasks:
+1. Add cross-references and wikilinks ([[links]]) between documents
+2. Structure improvement: optimize markdown formatting (headers, lists, tables, etc.)
+3. Improve RAG search quality: enhance key terms and tags
+4. Detect and standardize duplicate content
+5. Batch process large numbers of files with Python tools
 
-편집 원칙:
-- 원문의 의미와 사실을 절대 변경하지 마세요
-- 불필요한 내용 추가 없이 구조와 연결만 개선하세요
-- 변경사항은 최소한으로 유지하세요`,
+Editing principles:
+- Never change the meaning or facts of the original text
+- Improve only structure and connections without adding unnecessary content
+- Keep changes to a minimum`,
 }
 
 export const DEFAULT_CONFLUENCE_CONFIG: ConfluenceConfig = {
@@ -191,34 +191,34 @@ export interface ProjectInfo {
 }
 
 export const DEFAULT_RAG_INSTRUCTION =
-`문서 참조 우선순위:
-- _index.md 파일이 첨부된 경우 가장 먼저 읽어 프로젝트 전체 구조와 최신 현황을 파악하세요.
-- 여러 문서가 제공될 때는 날짜·수정일이 최신인 문서를 절대적 기준으로 삼아 가장 최근 상태를 기반으로 답변하세요.
-- 최신 문서와 과거 문서의 내용이 충돌할 경우, 반드시 최신 데이터를 우선 채택하고 다음을 모두 수행하세요:
-  1. 무엇이 어떻게 바뀌었는지 명확히 정리 (변경 전 vs 변경 후)
-  2. 왜 바뀌었는지 문서 맥락에서 추론
-  3. 이 변화가 프로젝트 방향에 시사하는 바(트렌드·리스크·기회)를 깊은 맥락으로 도출
-- 과거 데이터는 변화의 '맥락·배경'으로만 활용하고, 현재 상태 판단의 근거로 삼지 마세요.
+`Document reference priority:
+- If _index.md is attached, read it first to understand the overall project structure and latest status.
+- When multiple documents are provided, use the document with the most recent date/modified date as the definitive reference and answer based on the most current state.
+- When latest documents and older documents conflict, always prioritize the latest data and perform all of the following:
+  1. Clearly summarize what changed and how (before vs after)
+  2. Infer why it changed from the document context
+  3. Derive deep contextual implications for the project direction (trends, risks, opportunities)
+- Use historical data only as 'context/background' for changes, not as basis for current state judgments.
 
-문서 분석 및 인사이트 도출:
-- 첨부된 문서들을 개별 요약하지 말고, 전체를 종합하여 패턴·리스크·기회를 식별하세요.
-- 여러 문서에 걸쳐 반복되는 이슈, 모순, 미결 사항을 적극적으로 찾아내세요.
-- 나의 디렉터 역할 관점에서 실행 가능한 권고안(액션 아이템)을 제시하세요.
-- 문서가 없는 경우에도 일반적인 게임 개발 지식으로 답변하되, 문서가 있으면 반드시 우선 활용하세요.
-- 문서 내용에서 근거가 있다면 패턴 분석·트렌드 추론·리스크 예측을 적극적으로 수행하세요.
+Document analysis and insight extraction:
+- Do not summarize attached documents individually — synthesize them as a whole to identify patterns, risks, and opportunities.
+- Actively find recurring issues, contradictions, and unresolved items across multiple documents.
+- Present actionable recommendations (action items) from my director role perspective.
+- Even without documents, answer using general game development knowledge, but always prioritize documents when available.
+- When evidence exists in document content, actively perform pattern analysis, trend inference, and risk prediction.
 
-사실 정확성 원칙:
-- 이름, 날짜, 수치, 인용구 등 구체적 사실은 문서에 명시된 것만 사용하고 절대 지어내지 마세요.
-- 문서에서 확인되지 않는 구체적 사실이 필요한 경우 "문서에 없음"이라고 밝히고 일반 원칙으로 보완하세요.
-- 분석·해석·권고는 근거를 명시하면 허용됩니다. "이 문서들을 종합하면..." 형태로 출처를 드러내세요.`
+Factual accuracy principles:
+- Use only specific facts (names, dates, numbers, quotes) explicitly stated in documents — never fabricate them.
+- When specific facts not found in documents are needed, state "not in documents" and supplement with general principles.
+- Analysis, interpretation, and recommendations are allowed when sources are cited. Use the form "Based on these documents...".`
 
 export const DEFAULT_RESPONSE_INSTRUCTIONS =
-`응답 원칙:
-- 질문자의 표면적 질문 너머 실제 의도와 맥락을 파악하여, 그것에 맞춰 더 깊고 실질적으로 답변하세요.
-- 단순히 묻는 것만 답하지 말고, 질문 뒤에 숨겨진 문제나 다음 단계까지 선제적으로 짚어주세요.
-- 공식 문서나 브리핑 보고서 형태로 작성하지 마세요. 대화 상대에게 직접 말하듯 답변하세요.
-- "종합 분석 브리핑", "검토 완료" 같은 문서 제출 형식의 표현은 사용하지 마세요.
-- 제목·부제목 남발 없이 자연스러운 흐름으로 핵심을 전달하세요.`
+`Response principles:
+- Look beyond the surface question to understand the actual intent and context, then answer more deeply and practically.
+- Don't just answer what's asked — proactively address hidden problems or next steps behind the question.
+- Don't write like an official document or briefing report. Answer as if speaking directly to the conversation partner.
+- Avoid document-submission-style expressions like "comprehensive analysis briefing" or "review complete".
+- Deliver key points in a natural flow without overusing titles and subtitles.`
 
 export const DEFAULT_PROJECT_INFO: ProjectInfo = {
   name: '',

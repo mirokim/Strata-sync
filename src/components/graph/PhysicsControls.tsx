@@ -55,7 +55,7 @@ export default function PhysicsControls() {
           color: isOpen ? 'var(--color-accent)' : 'var(--color-text-muted)',
           transition: 'color 0.15s',
         }}
-        title="Physics controls 펼치기/접기"
+        title="Toggle Physics controls"
       >
         <Settings size={11} />
         <span
@@ -85,8 +85,8 @@ export default function PhysicsControls() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 6 }}>
             <button
               onClick={() => graphCallbacks.resetCamera?.()}
-              title="뷰포트 초기화"
-              aria-label="뷰포트 초기화"
+              title="Reset viewport"
+              aria-label="Reset viewport"
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -100,8 +100,8 @@ export default function PhysicsControls() {
             </button>
             <button
               onClick={resetPhysics}
-              title="Physics 초기화"
-              aria-label="Physics 초기화"
+              title="Reset Physics"
+              aria-label="Reset Physics"
               style={{
                 background: 'transparent',
                 border: 'none',

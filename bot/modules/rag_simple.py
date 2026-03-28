@@ -1,5 +1,5 @@
 """
-rag_simple.py — Slack 봇용 간단 키워드 RAG
+rag_simple.py — Simple keyword RAG for the Slack bot
 """
 import json
 import logging
@@ -26,8 +26,8 @@ class RagResult(TypedDict):
     tags: list[str]
     doc_type: str   # VaultDoc.doc_type — "reference" | "daily" | etc.
 
-# ── scan_vault 메모리 캐시 (TTL 60초) ─────────────────────────────────────────
-# 매 검색마다 전체 .md 파싱을 방지. 60초 내 동일 볼트 재검색 시 캐시 반환.
+# ── scan_vault memory cache (TTL 60s) ─────────────────────────────────────────
+# Prevents full .md parsing on every search. Returns cache for same vault within 60s.
 _vault_cache: dict = {}
 _VAULT_CACHE_TTL = 60.0
 _VAULT_CACHE_LOCK = threading.Lock()
@@ -45,9 +45,9 @@ def _get_cached_docs(vault_path: str) -> list[VaultDoc]:
     return docs
 
 
-# ── 핫스코어 (OpenViking memory_lifecycle 기반) ───────────────────────────────
-# 자주/최근 참조된 문서에 보너스를 부여해 검색 결과 재정렬.
-# 공식: sigmoid(log1p(접근횟수)) × exp(-decay × 경과일수)
+# ── Hot Score (based on OpenViking memory_lifecycle) ──────────────────────────
+# Gives bonus to frequently/recently accessed documents for search result reranking.
+# Formula: sigmoid(log1p(access_count)) × exp(-decay × days_elapsed)
 
 _HOTNESS_HALF_LIFE_DAYS: float = 7.0
 _HOTNESS_ALPHA: float = 0.15  # 검색점수 85% + 핫스코어 15%
@@ -71,15 +71,15 @@ def _save_access_store(store: dict) -> None:
             json.dump(store, f, ensure_ascii=False)
         os.replace(tmp_path, _ACCESS_STORE_PATH)  # atomic rename — concurrent write 안전
     except PermissionError:
-        logger.error("권한 오류: vault_access.json 쓰기 실패 (%s)", _ACCESS_STORE_PATH)
+        logger.error("Permission error: failed to write vault_access.json (%s)", _ACCESS_STORE_PATH)
     except OSError as e:
-        logger.error("파일 시스템 오류: vault_access.json 저장 실패: %s", e)
+        logger.error("File system error: failed to save vault_access.json: %s", e)
     except Exception:
-        logger.exception("예상치 못한 오류: _save_access_store")
+        logger.exception("Unexpected error: _save_access_store")
 
 
 def record_doc_access(stems: list[str]) -> None:
-    """검색 결과로 반환된 문서 stem 목록의 접근 횟수를 기록."""
+    """Record access counts for document stems returned in search results."""
     # stems: vault-relative 파일명 (확장자 없음)
     if not stems:
         return
@@ -95,7 +95,7 @@ def record_doc_access(stems: list[str]) -> None:
 
 
 def _hotness_score(active_count: int, updated_at_iso: str | None) -> float:
-    """OpenViking 공식: sigmoid(log1p(count)) × exp(-decay × age_days)"""
+    """OpenViking formula: sigmoid(log1p(count)) × exp(-decay × age_days)"""
     if not updated_at_iso:
         return 0.0
     try:
@@ -113,7 +113,7 @@ def _hotness_score(active_count: int, updated_at_iso: str | None) -> float:
 
 
 def apply_hotness_rerank(results: list[RagResult]) -> list[RagResult]:
-    """검색 결과에 핫스코어를 블렌딩해 재정렬. 원본 score 필드를 업데이트."""
+    """Blend hot scores into search results and rerank. Updates the original score field."""
     if not results:
         return results
     with _ACCESS_STORE_LOCK:
@@ -130,14 +130,14 @@ def apply_hotness_rerank(results: list[RagResult]) -> list[RagResult]:
 
 
 def _tokenize(text: str) -> list[str]:
-    """텍스트를 소문자 토큰 리스트로 분리 (공백·특수문자 기준)."""
+    """Split text into a lowercase token list (by whitespace and special characters)."""
     tokens = re.split(r"[\s\[\](),./|_\-]+", text.lower())
     return [t for t in tokens if len(t) >= 2]
 
 
 def _build_idf(docs: list[VaultDoc]) -> dict[str, float]:
-    """코퍼스 전체에서 각 토큰의 IDF 값을 계산.
-    IDF = log(N / df)  — df: 해당 토큰이 등장한 문서 수
+    """Compute IDF values for each token across the entire corpus.
+    IDF = log(N / df)  — df: number of documents containing the token
     """
     N = len(docs)
     if N == 0:
@@ -151,8 +151,8 @@ def _build_idf(docs: list[VaultDoc]) -> dict[str, float]:
 
 
 def _score_doc(doc: VaultDoc, query_tokens: list[str], idf: dict[str, float]) -> float:
-    """TF-IDF 기반 문서 점수.
-    제목·파일명·본문에 가중치를 다르게 적용하되, IDF로 공통 단어 억제.
+    """TF-IDF based document score.
+    Apply different weights to title/filename/body, with IDF suppressing common words.
     """
     title_lower = doc.title.lower()
     stem_lower  = doc.stem.lower()
@@ -161,7 +161,7 @@ def _score_doc(doc: VaultDoc, query_tokens: list[str], idf: dict[str, float]) ->
     for token in query_tokens:
         idf_val = idf.get(token, 0.0)
         if idf_val <= 0:
-            continue  # 전 문서에 등장 → 변별력 없음, 스킵
+            continue  # Appears in all documents → no discriminating power, skip
         if token in title_lower:
             score += 3.0 * idf_val
         if token in stem_lower:
@@ -189,7 +189,7 @@ def search_vault(
         active_set = {str(Path(f).resolve()) for f in active_folders}
         docs = [d for d in docs if str(Path(d.path).parent.resolve()) in active_set]
 
-    # 필터링된 코퍼스 기준으로 IDF 계산 (index_ 파일 제외)
+    # Compute IDF based on filtered corpus (excluding index_ files)
     corpus = [d for d in docs if not d.stem.startswith("index_")]
     idf = _build_idf(corpus)
 
@@ -219,7 +219,7 @@ def build_rag_context(results: list[RagResult], max_chars: int = 8000) -> str:
     if not results:
         return ""
 
-    parts = ["## 참고 문서\n"]
+    parts = ["## Reference Documents\n"]
     total = 0
     for r in results:
         tag_str = " ".join(f"`{t}`" for t in (r["tags"] or []))

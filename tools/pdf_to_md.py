@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-pdf_to_md.py — §4.2 PDF → Obsidian Markdown 변환
+pdf_to_md.py — §4.2 PDF → Obsidian Markdown conversion
 
-PDF를 세 케이스로 자동 분기:
+PDF auto-routes to three cases:
   텍스트PDF  — pdfplumber로 텍스트+표 추출, pymupdf로 이미지 추출
   스캔PDF    — 페이지 전체를 PNG 이미지로 변환 (OCR 생략 가능)
   혼합PDF    — 텍스트 추출 + 페이지 이미지 병행 (아트/기획 슬라이드 등)
 
-이미지 파일명 규칙: {stem}_p{페이지번호}_{순번}.png
+Image filename rule: {stem}_p{page_number}_{index}.png
 
-사용법:
+Usage:
   python pdf_to_md.py <src_dir_or_file> <active_dir> <attachments_dir>
 
   # 단일 파일
@@ -40,7 +40,7 @@ except ImportError:
     sys.exit(1)
 
 
-# ── 노이즈 제거 패턴 (§4.2.1) ─────────────────────────────────────
+# ── Noise removal patterns (§4.2.1) ─────────────────────────────────────
 NOISE_PATTERNS = [
     re.compile(r'Powered\s+by\s+Confluence', re.I),
     re.compile(r'Edit\s+this\s+page', re.I),
@@ -82,7 +82,7 @@ def detect_pdf_type(pdf_path: Path) -> str:
 
 
 def clean_text(text: str) -> str:
-    """노이즈 제거 및 정규화"""
+    """Remove noise and normalize"""
     if not text:
         return ''
     lines = text.split('\n')
@@ -138,9 +138,9 @@ def extract_embedded_images(fitz_page, stem: str, page_num: int, attachments_dir
 
 
 def pdf_to_md(pdf_path: Path, active_dir: Path, attachments_dir: Path) -> bool:
-    """단일 PDF → MD 변환. 성공 시 True."""
+    """Convert a single PDF to MD. Returns True on success."""
     stem = pdf_path.stem
-    # 특수문자 정리 (파일명에 쓸 수 없는 것들)
+    # Clean special characters (those not allowed in filenames)
     safe_stem = re.sub(r'[<>:"/\\|?*]', '_', stem)
     out_md = active_dir / f"{safe_stem}.md"
 
@@ -230,7 +230,7 @@ def pdf_to_md(pdf_path: Path, active_dir: Path, attachments_dir: Path) -> bool:
     except Exception:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
-    # 날짜 파일명에서 추출 시도
+    # Try to extract date from filename
     m_date = re.search(r'(\d{4})[_\-]?(\d{2})[_\-]?(\d{2})', stem)
     if m_date:
         try:
@@ -238,7 +238,7 @@ def pdf_to_md(pdf_path: Path, active_dir: Path, attachments_dir: Path) -> bool:
         except Exception:
             pass
 
-    # type 추정
+    # Estimate type
     doc_type = 'spec'
     if any(kw in stem for kw in ['정례', '보고', '피드백', '회의', '이사장']):
         doc_type = 'meeting'
@@ -247,7 +247,7 @@ def pdf_to_md(pdf_path: Path, active_dir: Path, attachments_dir: Path) -> bool:
     elif any(kw in stem for kw in ['레퍼런스', '분석', '조사']):
         doc_type = 'reference'
 
-    # 본문 생성
+    # Generate body
     body_content = '\n\n---\n\n'.join(sections)
 
     n_img = len(image_files)
@@ -277,7 +277,7 @@ pages: {n_pages if 'n_pages' in dir() else 0}
 
 
 def process_directory(src_dir: Path, active_dir: Path, attachments_dir: Path) -> tuple:
-    """디렉토리 내 모든 PDF (재귀) 처리. (성공, 실패, 스킵) 반환."""
+    """Process all PDFs (recursive) in directory. Returns (success, fail, skip)."""
     pdfs = list(src_dir.rglob('*.pdf'))
     success = skip = fail = 0
     for pdf in pdfs:
@@ -290,7 +290,7 @@ def process_directory(src_dir: Path, active_dir: Path, attachments_dir: Path) ->
         if ok:
             success += 1
             if success % 20 == 0:
-                print(f"  ... {success}개 완료")
+                print(f"  ... {success}개 Complete")
         else:
             fail += 1
     return success, fail, skip
@@ -298,9 +298,9 @@ def process_directory(src_dir: Path, active_dir: Path, attachments_dir: Path) ->
 
 def main():
     parser = argparse.ArgumentParser(description='§4.2 PDF → Markdown 변환')
-    parser.add_argument('src', help='PDF 파일 또는 디렉토리 경로')
-    parser.add_argument('active_dir', help='active/ 폴더 경로')
-    parser.add_argument('attachments_dir', help='attachments/ 폴더 경로')
+    parser.add_argument('src', help='PDF file or directory path')
+    parser.add_argument('active_dir', help='active/ folder path')
+    parser.add_argument('attachments_dir', help='attachments/ folder path')
     args = parser.parse_args()
 
     src = Path(args.src)
@@ -312,18 +312,18 @@ def main():
 
     if src.is_file():
         ok = pdf_to_md(src, active_dir, attachments_dir)
-        print('✅ 변환 완료' if ok else '⚠️ 스킵됨')
+        print('✅ 변환 Complete' if ok else '⚠️ Skipped')
     elif src.is_dir():
-        print(f"PDF 변환 시작: {src}")
+        print(f"PDF Starting conversion: {src}")
         total = len(list(src.rglob('*.pdf')))
         print(f"총 {total}개 PDF 발견")
         success, fail, skip = process_directory(src, active_dir, attachments_dir)
-        print(f"\n=== §4.2 PDF 변환 완료 ===")
-        print(f"  성공: {success}개")
-        print(f"  실패: {fail}개")
+        print(f"\n=== §4.2 PDF 변환 Complete ===")
+        print(f"  Success: {success}개")
+        print(f"  Fail: {fail}개")
         print(f"  스킵: {skip}개 (이미 존재)")
     else:
-        print(f"오류: {src} 를 찾을 수 없습니다.")
+        print(f"Error: {src} not found.")
         sys.exit(1)
 
 

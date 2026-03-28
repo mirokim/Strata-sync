@@ -1,24 +1,24 @@
 """
-Strata Sync Telegram Bot — 볼트 RAG + 페르소나 AI 텔레그램 봇
+Strata Sync Telegram Bot — Vault RAG + Persona AI Telegram Bot
 ──────────────────────────────────────────────────────────────
-기능:
-  - Telegram 봇을 통한 볼트 기반 RAG 질의응답
-  - 5개 디렉터 페르소나 지원 (/ask chief, /ask art 등)
-  - 멀티에이전트 RAG (병렬 서브에이전트 문서 분석)
-  - MiroFish 시뮬레이션 트리거
-  - 웹 검색 보강
-  - 파일 첨부 (이미지/문서) 지원
+Features:
+  - Vault-based RAG Q&A via Telegram bot
+  - 5 director personas supported (/ask chief, /ask art, etc.)
+  - Multi-agent RAG (parallel sub-agent document analysis)
+  - MiroFish simulation trigger
+  - Web search augmentation
+  - File attachment (image/document) support
 
-실행:
+Run:
     python telegram_bot.py
-    또는 환경 변수: TELEGRAM_BOT_TOKEN=xxx python telegram_bot.py
+    or env var: TELEGRAM_BOT_TOKEN=xxx python telegram_bot.py
 
-커맨드:
-    /ask [persona] 질문   — 페르소나 RAG 질의
-    /search 키워드         — 볼트 검색
-    /debate 주제           — 멀티 페르소나 토론
-    /mirofish 주제         — MiroFish 시뮬레이션
-    /help                  — 도움말
+Commands:
+    /ask [persona] question — Persona RAG query
+    /search keyword         — Vault search
+    /debate topic           — Multi-persona debate
+    /mirofish topic         — MiroFish simulation
+    /help                   — Help
 """
 import json
 import logging
@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-# 모듈 경로 추가
+# Add module path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
@@ -69,33 +69,33 @@ def load_config() -> dict:
     return cfg
 
 
-# ─── 도움말 ───────────────────────────────────────────────────────────────────
+# ─── Help ─────────────────────────────────────────────────────────────────────
 
-HELP_TEXT = """*Strata Sync Bot* — 볼트 기반 AI 어시스턴트
+HELP_TEXT = """*Strata Sync Bot* — Vault-based AI Assistant
 
-*커맨드:*
-`/ask [persona] 질문` — AI에게 질문 (기본: chief)
-`/search 키워드` — 볼트 문서 검색
-`/debate 주제` — 멀티 페르소나 토론
-`/mirofish 주제` — MiroFish 시뮬레이션
-`/help` — 이 도움말
+*Commands:*
+`/ask [persona] question` — Ask AI (default: chief)
+`/search keyword` — Search vault documents
+`/debate topic` — Multi-persona debate
+`/mirofish topic` — MiroFish simulation
+`/help` — This help message
 
-*페르소나:*
-• `chief` (PM/수석) — 프로젝트 총괄
-• `art` (아트) — 아트 디렉션
-• `spec` (기획) — 기획/레벨 디자인
-• `tech` (기술) — 프로그래밍/기술
+*Personas:*
+• `chief` (PM/Lead) — Project management
+• `art` (Art) — Art direction
+• `spec` (Design) — Game design / Level design
+• `tech` (Tech) — Programming / Technical
 
-*예시:*
-`/ask 이번 스프린트 주요 이슈 정리해줘`
-`/ask art 캐릭터 컨셉 관련 문서 분석해줘`
-`/search 밸런스 패치`
+*Examples:*
+`/ask Summarize the key issues for this sprint`
+`/ask art Analyze character concept documents`
+`/search balance patch`
 
-일반 메시지를 보내면 기본 페르소나(chief)가 응답합니다.
+Send a plain message and the default persona (chief) will respond.
 """
 
 
-# ─── RAG + LLM 응답 생성 ─────────────────────────────────────────────────────
+# ─── RAG + LLM Response Generation ───────────────────────────────────────────
 
 def generate_answer(
     query: str,
@@ -103,17 +103,17 @@ def generate_answer(
     cfg: dict,
     attached_files: list[dict] | None = None,
 ) -> str:
-    """볼트 RAG + LLM으로 답변 생성."""
+    """Generate an answer using vault RAG + LLM."""
     vault_path = cfg.get("vault_path", "").strip()
     api_key = get_anthropic_key(cfg)
     if not api_key:
-        return "API 키가 설정되지 않았습니다. config.json 또는 ANTHROPIC_API_KEY 환경변수를 확인하세요."
+        return "API key is not configured. Please check config.json or the ANTHROPIC_API_KEY environment variable."
 
     persona = resolve_persona(persona_tag, cfg.get("personas"))
     persona_name = persona.get("name", persona_tag)
     persona_emoji = persona.get("emoji", "🤖")
 
-    # 1) Electron RAG 시도 → 실패 시 rag_simple 폴백
+    # 1) Try Electron RAG → fall back to rag_simple on failure
     rag_context = ""
     sources: list[str] = []
 
@@ -123,7 +123,7 @@ def generate_answer(
             if result:
                 return f"{persona_emoji} *{persona_name}*\n\n{result}"
         except Exception as e:
-            logger.warning("Electron ask 실패, 로컬 RAG 폴백: %s", e)
+            logger.warning("Electron ask failed, falling back to local RAG: %s", e)
 
         try:
             docs = electron_search(query, top_n=10)
@@ -143,9 +143,9 @@ def generate_answer(
                 rag_context += f"\n\n--- {r['title']} ---\n{r['body'][:2000]}"
                 sources.append(r["title"])
         except Exception as e:
-            logger.error("로컬 RAG 검색 실패: %s", e)
+            logger.error("Local RAG search failed: %s", e)
 
-    # 2) 웹 검색 보강 (선택)
+    # 2) Web search augmentation (optional)
     web_ctx = ""
     if cfg.get("enable_web_search", False):
         try:
@@ -154,12 +154,12 @@ def generate_answer(
         except Exception:
             pass
 
-    # 3) LLM 호출
-    system_prompt = persona.get("system_prompt", f"당신은 {persona_name}입니다. 볼트 문서 기반으로 정확하게 답변하세요.")
+    # 3) LLM call
+    system_prompt = persona.get("system_prompt", f"You are {persona_name}. Answer accurately based on vault documents.")
     if rag_context:
-        system_prompt += f"\n\n[참고 문서]\n{rag_context}"
+        system_prompt += f"\n\n[Reference Documents]\n{rag_context}"
     if web_ctx:
-        system_prompt += f"\n\n[웹 검색 결과]\n{web_ctx}"
+        system_prompt += f"\n\n[Web Search Results]\n{web_ctx}"
 
     model = cfg.get("telegram_model", DEFAULT_SONNET_MODEL)
     client = ClaudeClient(api_key, model=model)
@@ -167,28 +167,28 @@ def generate_answer(
     try:
         answer = client.complete(system=system_prompt, user=query, max_tokens=4096, cache_system=True)
     except Exception as e:
-        logger.error("LLM 호출 실패: %s", e)
-        return f"LLM 호출 중 오류 발생: {e}"
+        logger.error("LLM call failed: %s", e)
+        return f"Error during LLM call: {e}"
 
-    # 4) 응답 조합
+    # 4) Compose response
     header = f"{persona_emoji} *{persona_name}*\n\n"
     footer = ""
     if sources:
         src_list = "\n".join(f"• `{s}`" for s in sources[:5])
-        footer = f"\n\n📎 *참고 문서:*\n{src_list}"
+        footer = f"\n\n📎 *Reference Documents:*\n{src_list}"
 
     return header + answer + footer
 
 
 def handle_search(query: str, cfg: dict) -> str:
-    """볼트 검색 결과 반환."""
+    """Return vault search results."""
     vault_path = cfg.get("vault_path", "").strip()
 
     if is_electron_alive():
         try:
             docs = electron_search(query, top_n=10)
             if docs:
-                lines = [f"🔍 *검색 결과* (`{query}`)\n"]
+                lines = [f"🔍 *Search Results* (`{query}`)\n"]
                 for i, d in enumerate(docs[:10], 1):
                     title = d.get("title", "?")
                     score = d.get("score", 0)
@@ -200,20 +200,20 @@ def handle_search(query: str, cfg: dict) -> str:
     if vault_path and Path(vault_path).exists():
         try:
             results = rag_search(query, vault_path, top_n=10)
-            lines = [f"🔍 *검색 결과* (`{query}`)\n"]
+            lines = [f"🔍 *Search Results* (`{query}`)\n"]
             for i, r in enumerate(results[:10], 1):
                 lines.append(f"{i}. `{r['title']}` (score: {r['score']:.3f})")
-            return "\n".join(lines) if len(lines) > 1 else "검색 결과가 없습니다."
+            return "\n".join(lines) if len(lines) > 1 else "No search results found."
         except Exception as e:
-            return f"검색 오류: {e}"
+            return f"Search error: {e}"
 
-    return "볼트 경로가 설정되지 않았습니다."
+    return "Vault path is not configured."
 
 
-# ─── 메시지 핸들러 ────────────────────────────────────────────────────────────
+# ─── Message Handler ──────────────────────────────────────────────────────────
 
 def handle_message(message: dict, cfg: dict, token: str) -> None:
-    """단일 Telegram 메시지 처리."""
+    """Process a single Telegram message."""
     chat_id = message["chat"]["id"]
     message_id = message.get("message_id")
 
@@ -223,34 +223,34 @@ def handle_message(message: dict, cfg: dict, token: str) -> None:
 
     persona_tag, query = parse_persona_command(text)
 
-    # 도움말
+    # Help
     if persona_tag == "__help__":
         send_message(token, chat_id, HELP_TEXT, reply_to=message_id)
         return
 
-    # 검색
+    # Search
     if persona_tag == "__search__":
         if not query:
-            send_message(token, chat_id, "검색어를 입력하세요. 예: `/search 밸런스`", reply_to=message_id)
+            send_message(token, chat_id, "Please enter a search term. Example: `/search balance`", reply_to=message_id)
             return
         send_typing(token, chat_id)
         result = handle_search(query, cfg)
         send_message(token, chat_id, result, reply_to=message_id)
         return
 
-    # 토론
+    # Debate
     if persona_tag == "__debate__":
         if not query:
-            send_message(token, chat_id, "토론 주제를 입력하세요. 예: `/debate PvP 밸런스`", reply_to=message_id)
+            send_message(token, chat_id, "Please enter a debate topic. Example: `/debate PvP balance`", reply_to=message_id)
             return
         send_typing(token, chat_id)
         # 각 페르소나로 순차 응답
-        send_message(token, chat_id, f"🎙️ *토론 시작:* {query}\n", reply_to=message_id)
+        send_message(token, chat_id, f"🎙️ *Debate Start:* {query}\n", reply_to=message_id)
         for tag in ["chief", "art", "spec", "tech"]:
             send_typing(token, chat_id)
-            answer = generate_answer(f"다음 주제에 대해 당신의 관점에서 의견을 제시하세요: {query}", tag, cfg)
+            answer = generate_answer(f"Please present your opinion from your perspective on the following topic: {query}", tag, cfg)
             send_message(token, chat_id, answer)
-        send_message(token, chat_id, "🏁 *토론 종료*")
+        send_message(token, chat_id, "🏁 *Debate End*")
         return
 
     # MiroFish
@@ -259,21 +259,21 @@ def handle_message(message: dict, cfg: dict, token: str) -> None:
         try:
             from modules.mirofish_runner import run_simulation as mirofish_run_python
             result = mirofish_run_python(
-                query or "기본 시뮬레이션",
+                query or "default simulation",
                 cfg.get("vault_path", ""),
                 get_anthropic_key(cfg),
             )
             send_message(token, chat_id, f"🐟 *MiroFish 결과*\n\n{result[:4000]}", reply_to=message_id)
         except Exception as e:
-            send_message(token, chat_id, f"MiroFish 오류: {e}", reply_to=message_id)
+            send_message(token, chat_id, f"MiroFish error: {e}", reply_to=message_id)
         return
 
-    # 일반 질문 (페르소나 지정 없으면 chief)
+    # General question (defaults to chief if no persona specified)
     if not persona_tag:
         persona_tag = "chief"
 
     if not query:
-        send_message(token, chat_id, "질문을 입력하세요.", reply_to=message_id)
+        send_message(token, chat_id, "Please enter a question.", reply_to=message_id)
         return
 
     send_typing(token, chat_id)
@@ -281,12 +281,12 @@ def handle_message(message: dict, cfg: dict, token: str) -> None:
     send_message(token, chat_id, answer, reply_to=message_id)
 
 
-# ─── Long Polling 루프 ────────────────────────────────────────────────────────
+# ─── Long Polling Loop ────────────────────────────────────────────────────────
 
 def run_polling(token: str, cfg: dict) -> None:
     """Telegram getUpdates long polling."""
     offset = 0
-    logger.info("Telegram 봇 시작 (long polling)...")
+    logger.info("Telegram bot started (long polling)...")
 
     while True:
         try:
@@ -302,7 +302,7 @@ def run_polling(token: str, cfg: dict) -> None:
                 if not message:
                     continue
 
-                # 메시지를 별도 스레드에서 처리 (long polling 블로킹 방지)
+                # Process message in a separate thread (prevent long polling blocking)
                 t = threading.Thread(
                     target=handle_message,
                     args=(message, cfg, token),
@@ -311,31 +311,31 @@ def run_polling(token: str, cfg: dict) -> None:
                 t.start()
 
         except KeyboardInterrupt:
-            logger.info("봇 종료 (사용자 중단)")
+            logger.info("Bot stopped (user interrupt)")
             break
         except Exception as e:
-            logger.error("Polling 오류: %s", e)
+            logger.error("Polling error: %s", e)
             time.sleep(5)
 
 
-# ─── 메인 ─────────────────────────────────────────────────────────────────────
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     cfg = load_config()
     token = cfg.get("telegram_bot_token", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     if not token:
-        print("❌ TELEGRAM_BOT_TOKEN이 설정되지 않았습니다.")
-        print("   config.json의 telegram_bot_token 또는 환경변수 TELEGRAM_BOT_TOKEN을 설정하세요.")
+        print("❌ TELEGRAM_BOT_TOKEN is not configured.")
+        print("   Set telegram_bot_token in config.json or the TELEGRAM_BOT_TOKEN environment variable.")
         sys.exit(1)
 
-    # 봇 정보 확인
+    # Verify bot info
     try:
         me = tg_api(token, "getMe")
         bot_info = me.get("result", {})
-        logger.info("봇 연결 성공: @%s (%s)", bot_info.get("username"), bot_info.get("first_name"))
+        logger.info("Bot connected successfully: @%s (%s)", bot_info.get("username"), bot_info.get("first_name"))
     except Exception as e:
-        print(f"❌ 봇 토큰 인증 실패: {e}")
+        print(f"❌ Bot token authentication failed: {e}")
         sys.exit(1)
 
     run_polling(token, cfg)

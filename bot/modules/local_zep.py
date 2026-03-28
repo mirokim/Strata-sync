@@ -1,10 +1,10 @@
 """
-local_zep.py — Zep Cloud 로컬 대체 구현 (SQLite in-memory 기반)
+local_zep.py — Local replacement for Zep Cloud (SQLite in-memory based)
 
-sqlite3 표준 라이브러리의 in-memory DB를 사용하여
-Zep Cloud의 에이전트 메모리 API를 재현합니다.
+Uses sqlite3 standard library's in-memory DB to replicate
+the Zep Cloud agent memory API.
 
-Zep Cloud API 대응:
+Zep Cloud API correspondence:
   client.add(session_id, messages)          → LocalZepClient.add()
   client.get(session_id)                    → LocalZepClient.get()
   client.search(session_id, text, limit)    → LocalZepClient.search()
@@ -27,7 +27,7 @@ class ZepMessage:
 @dataclass
 class ZepMemory:
     messages: list[ZepMessage]
-    context: str        # 최근 메시지 컨텍스트 (Zep의 auto-summary 대응)
+    context: str        # Recent message context (corresponds to Zep's auto-summary)
 
 
 @dataclass
@@ -40,8 +40,8 @@ class LocalZepClient:
     """
     Zep Cloud client drop-in replacement (SQLite in-memory).
 
-    인스턴스마다 독립된 in-memory SQLite DB를 사용합니다.
-    시뮬레이션 1회 실행 범위 내에서 유효 — 인스턴스 소멸 시 DB도 소멸.
+    Each instance uses an independent in-memory SQLite DB.
+    Valid within a single simulation run — DB is destroyed when the instance is destroyed.
     """
 
     DDL = """
@@ -62,7 +62,7 @@ class LocalZepClient:
         self._conn.executescript(self.DDL)
         self._conn.commit()
 
-    # ── Zep Cloud API 대응 ────────────────────────────────────────────────────
+    # ── Zep Cloud API correspondence ────────────────────────────────────────────
 
     def add(self, session_id: str, messages: list[ZepMessage]) -> None:
         """Zep: client.memory.add(session_id, messages=[...])"""
@@ -92,7 +92,7 @@ class LocalZepClient:
     def search(
         self, session_id: str, text: str, limit: int = 5
     ) -> list[ZepSearchResult]:
-        """Zep: client.memory.search() — 키워드 빈도 기반 관련도 점수"""
+        """Zep: client.memory.search() — keyword frequency based relevance score"""
         words = text.lower().split()
         if not words:
             return []
@@ -106,10 +106,10 @@ class LocalZepClient:
         return sorted(scored, key=lambda r: r.score, reverse=True)[:limit]
 
     def delete(self, session_id: str) -> None:
-        """세션 메시지 삭제"""
+        """Delete session messages"""
         self._conn.execute("DELETE FROM messages WHERE session=?", (session_id,))
         self._conn.commit()
 
     def close(self) -> None:
-        """DB 연결 종료 및 메모리 해제"""
+        """Close DB connection and release memory"""
         self._conn.close()

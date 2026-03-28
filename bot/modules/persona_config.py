@@ -1,9 +1,9 @@
 """
-persona_config.py — Slack 봇 페르소나 설정
+persona_config.py — Slack bot persona configuration
 
-페르소나 이름·이모지·시스템 프롬프트는 Electron /settings API에서 동적으로 로드됩니다.
-Electron 미실행 시 name/emoji만 최소 폴백 제공.
-config.json의 personas 섹션으로 추가 재정의 가능.
+Persona name/emoji/system prompts are dynamically loaded from the Electron /settings API.
+When Electron is not running, only minimal fallback (name/emoji) is provided.
+Can be further overridden via the personas section in config.json.
 """
 from __future__ import annotations
 
@@ -12,15 +12,15 @@ from .rag_electron import get_persona_for_tag
 PERSONA_ALIASES: dict[str, str] = {
     "chief": "chief",
     "pm":    "chief",
-    "수석":  "chief",
-    "디렉터": "chief",
+    "수석":  "chief",      # Korean alias: lead
+    "디렉터": "chief",    # Korean alias: director
     "art":   "art",
-    "아트":  "art",
+    "아트":  "art",        # Korean alias: art
     "spec":  "spec",
-    "기획":  "spec",
+    "기획":  "spec",       # Korean alias: design/planning
     "tech":  "tech",
-    "기술":  "tech",
-    "프로그": "tech",
+    "기술":  "tech",       # Korean alias: tech
+    "프로그": "tech",     # Korean alias: programming
 }
 
 
