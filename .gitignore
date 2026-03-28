@@ -25,6 +25,9 @@ release/
 .DS_Store
 Thumbs.db
 
+# Internal docs
+docs/
+
 # TypeScript build info
 tsconfig.tsbuildinfo
 
